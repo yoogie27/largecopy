@@ -8,6 +8,8 @@
 
 Built from scratch in C++ with the Win32 API. No frameworks, no runtime dependencies, no external DLLs. A single ~200 KB executable.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ---
 
 ## What problem does this solve?

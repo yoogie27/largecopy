@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Create build directory
+        run: mkdir build
+
+      - name: Compile
+        run: >
+          cl.exe /nologo /std:c++20 /O2 /EHsc /W4 /WX
+          /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS
+          /I vendor
+          /Fe:build\largecopy.exe
+          /Fo:build\
+          src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
+          src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
+          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
+          /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
+
+      - name: Smoke test
+        run: build\largecopy.exe help
+
+      - name: Create self-signed certificate and sign exe
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=largecopy" `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -NotAfter (Get-Date).AddYears(1)
+
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'x64' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          & $signtool.FullName sign `
+            /sha1 $cert.Thumbprint `
+            /fd SHA256 `
+            /t http://timestamp.digicert.com `
+            build\largecopy.exe
+
+          Write-Host "Signed with thumbprint: $($cert.Thumbprint)"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: build\largecopy.exe
