@@ -1,0 +1,8 @@
+build/
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.tmp
+*.lcledger
+.vs/
