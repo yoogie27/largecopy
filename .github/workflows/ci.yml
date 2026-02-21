@@ -83,20 +83,11 @@ jobs:
           languages: cpp
           queries: security-and-quality
 
-      - name: Create build directory
-        run: mkdir build
-
       - name: Build for CodeQL
-        run: >
-          cl.exe /nologo /std:c++20 /O2 /EHsc /W4
-          /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS
-          /I vendor
-          /Fe:build\largecopy.exe
-          /Fo:build\
-          src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
-          src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
-          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
-          /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
+        shell: cmd
+        run: |
+          mkdir build
+          cl.exe /nologo /std:c++20 /O2 /EHsc /W4 /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /I vendor /Fe:build\largecopy.exe /Fo:build\ src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp src\buffer_pool.cpp src\wan.cpp src\detect.cpp /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
 
       - uses: github/codeql-action/analyze@v4
         with:
