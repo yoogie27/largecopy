@@ -1,0 +1,20 @@
+# Winget manifest template for largecopy
+# To publish: submit a PR to https://github.com/microsoft/winget-pkgs
+# with this file at manifests/y/yoogie27/largecopy/<version>/yoogie27.largecopy.yaml
+
+PackageIdentifier: yoogie27.largecopy
+PackageVersion: 0.0.0  # update per release
+PackageName: largecopy
+Publisher: yoogie27
+License: MIT
+ShortDescription: High-performance file copy engine with crash-safe resume and WAN optimization
+PackageUrl: https://github.com/yoogie27/largecopy
+Installers:
+  - Architecture: x64
+    InstallerType: portable
+    InstallerUrl: https://github.com/yoogie27/largecopy/releases/download/v0.0.0/largecopy.exe
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    Commands:
+      - largecopy
+ManifestType: singleton
+ManifestVersion: 1.6.0

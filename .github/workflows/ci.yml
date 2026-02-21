@@ -79,7 +79,11 @@ jobs:
           languages: cpp
           queries: security-and-quality
 
-      - uses: github/codeql-action/autobuild@v4
+      - name: Configure CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build via MSBuild
+        run: cmake --build build --config Release
 
       - uses: github/codeql-action/analyze@v4
         with:
