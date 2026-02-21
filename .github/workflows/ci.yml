@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Create build directory
+        run: mkdir build
+
+      - name: Compile
+        run: >
+          cl.exe /nologo /std:c++20 /O2 /EHsc /W4 /WX
+          /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS
+          /I vendor
+          /Fe:build\largecopy.exe
+          /Fo:build\
+          src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
+          src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
+          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
+          /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
+
+      - name: Smoke test
+        run: build\largecopy.exe help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: largecopy
+          path: build\largecopy.exe
+
+  msvc-analyze:
+    name: MSVC Static Analysis
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Create build directory
+        run: mkdir build
+
+      - name: Compile with /analyze
+        run: >
+          cl.exe /nologo /std:c++20 /O2 /EHsc /W4
+          /analyze /analyze:external- /external:I vendor /external:W0
+          /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS
+          /I vendor
+          /Fe:build\largecopy.exe
+          /Fo:build\
+          src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
+          src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
+          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
+          /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
+
+  codeql:
+    name: CodeQL Security Analysis
+    runs-on: windows-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: cpp
+          queries: security-and-quality
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Create build directory
+        run: mkdir build
+
+      - name: Build for CodeQL
+        run: >
+          cl.exe /nologo /std:c++20 /O2 /EHsc /W4
+          /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS
+          /I vendor
+          /Fe:build\largecopy.exe
+          /Fo:build\
+          src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
+          src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
+          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
+          /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:cpp"
