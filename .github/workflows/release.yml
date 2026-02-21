@@ -77,8 +77,8 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            build\largecopy.exe
-            build\largecopy.exe.sha256
+            build/largecopy.exe
+            build/largecopy.exe.sha256
 
       - name: Update Scoop manifest
         shell: pwsh
