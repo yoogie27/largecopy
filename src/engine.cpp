@@ -1183,13 +1183,16 @@ int CopyEngine::run_copy(const Config& cfg) {
     // Post-copy verification
     if (result == 0 && cfg.verify_after) {
         if (!cfg.quiet) lc_log(L"\nRunning post-copy verification...");
+        ledger.close();  // release file lock so run_verify can reopen it
         Config verify_cfg = cfg;
         verify_cfg.command = Command::Verify;
         result = run_verify(verify_cfg);
     }
 
     // Clean up ledger on success
-    if (result == 0 && ledger.all_done()) {
+    // Note: cfg.verify_after short-circuits so all_done() is never called
+    // on a closed ledger (header_ would be null after close).
+    if (result == 0 && (cfg.verify_after || ledger.all_done())) {
         ledger.close();
         DeleteFileW(ledger_path);
         if (!cfg.quiet) lc_log(L"Ledger removed (transfer complete)");

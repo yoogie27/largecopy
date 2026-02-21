@@ -256,6 +256,16 @@ Test-Case "copy with --no-checksum" {
     if (!(FilesEqual $src $dst)) { throw "Files differ" }
 }
 
+Test-Case "copy with --verify-after" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (2MB)
+    $r = Invoke-Lc @("copy", "--quiet", "--verify-after", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
 Test-Case "copy with --quiet produces minimal output" {
     $d = New-TestDir
     $src = Join-Path $d "src.bin"
