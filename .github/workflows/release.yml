@@ -36,7 +36,8 @@ jobs:
       - name: Smoke test
         run: build\largecopy.exe help
 
-      - name: Create self-signed certificate and sign exe
+      - name: Sign exe (self-signed)
+        continue-on-error: true
         shell: pwsh
         run: |
           $cert = New-SelfSignedCertificate `
@@ -50,6 +51,11 @@ jobs:
             Where-Object { $_.FullName -match 'x64' } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
+
+          if (-not $signtool) {
+            Write-Host "::warning::signtool.exe not found, skipping signing"
+            exit 0
+          }
 
           & $signtool.FullName sign `
             /sha1 $cert.Thumbprint `
@@ -97,4 +103,4 @@ jobs:
           git fetch origin main
           git checkout main
           git add scoop/largecopy.json
-          git diff --cached --quiet && echo "No changes" || git commit -m "scoop: update manifest for ${{ github.ref_name }}" && git push origin main
+          git diff --cached --quiet || (git commit -m "scoop: update manifest for ${{ github.ref_name }}" && git push origin main)
