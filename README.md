@@ -13,6 +13,9 @@
   <img src="https://img.shields.io/badge/Alternative_to-Robocopy-orange" alt="AlternativeTo" />
   <a href="https://opensource.org/licenses/MIT" target="_blank">
     <img src="https://img.shields.io/badge/License-MIT-yellow" alt="AlternativeTo" /></a>
+  <img src="https://img.shields.io/badge/Restartable-Copy-green" alt="AlternativeTo" />
+  <img src="https://img.shields.io/badge/SMB-Multichannel-blue" alt="AlternativeTo" />
+  <img src="https://img.shields.io/badge/Automatic-Tuning-pink" alt="AlternativeTo" />
 </p>
 
 ---
