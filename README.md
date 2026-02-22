@@ -22,7 +22,7 @@
 
 > *When you need to move a single massive file across a network — fast, reliably, and restartably.*
 
-**largecopy** copies single large files at maximum possible speed across any network condition — local NVMe, 10 GbE LAN, WiFi, VPN tunnels — while guaranteeing data integrity and the ability to resume from any interruption. It auto-detects your hardware and network, tunes itself, and gets out of your way.
+**largecopy** copies single large files at maximum possible speed across any network condition — local NVMe, 10 GbE LAN, WiFi, VPN tunnels — while ensuring data integrity and the ability to resume from any interruption. It auto-detects your hardware and network, tunes itself, and gets out of your way.
 
 Built from scratch in C++ with the Win32 API. No frameworks, no runtime dependencies, no external DLLs. A single ~200 KB executable.
 
@@ -253,13 +253,13 @@ largecopy mitigates this by flushing the destination at the end of the transfer,
 largecopy D:\important.bak \\server\share\important.bak --verify-after
 ```
 
-This re-reads the entire destination file after the copy and verifies every chunk's hash. It roughly doubles the transfer time but guarantees end-to-end correctness.
+This re-reads the entire destination file after the copy and verifies every chunk's hash. It roughly doubles the transfer time but ensures end-to-end correctness.
 
 ### Recommendation
 
 When possible, **prefer pulling files (remote to local) over pushing (local to remote)**. The receiving machine has full control over write durability when the destination is a local disk. If you must push to a remote target and the data is critical, always use `--verify-after`.
 
-### What the checksums guarantee
+### What the checksums verify
 
 During the copy, each chunk is hashed (xxHash3-128) from the source data in memory before being written. These hashes are stored in the ledger and enable:
 
