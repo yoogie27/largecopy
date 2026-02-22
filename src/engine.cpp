@@ -904,6 +904,15 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     }
     ledger.flush();
 
+    // Flush destination data to stable storage (critical for remote targets
+    // where write-back caching means data may still be in server RAM).
+    if (env_.dest.is_remote && dst_handle_ != INVALID_HANDLE_VALUE) {
+        FlushFileBuffers(dst_handle_);
+    }
+    if (env_.dest.is_remote) {
+        dst_pool_.flush();
+    }
+
     // Truncate destination to exact size if not sector-aligned
     if (hdr->source_size % SECTOR_SIZE != 0) {
         // Close all handles first
@@ -956,7 +965,7 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
 
 // ── Copy command ────────────────────────────────────────────────────────────
 int CopyEngine::run_copy(const Config& cfg) {
-    // Get source file size
+    // Get source file size and timestamp (for change detection)
     WIN32_FILE_ATTRIBUTE_DATA src_attr = {};
     if (!GetFileAttributesExW(cfg.source, GetFileExInfoStandard, &src_attr)) {
         lc_error(L"Cannot access source file '%s': %u", cfg.source, GetLastError());
@@ -964,6 +973,7 @@ int CopyEngine::run_copy(const Config& cfg) {
     }
     uint64_t source_size = (static_cast<uint64_t>(src_attr.nFileSizeHigh) << 32) |
                             src_attr.nFileSizeLow;
+    FILETIME source_mtime_before = src_attr.ftLastWriteTime;
 
     if (source_size == 0) {
         lc_warn(L"Source file is empty - creating empty destination");
@@ -1179,6 +1189,18 @@ int CopyEngine::run_copy(const Config& cfg) {
 
     // Execute!
     int result = execute_transfer(tuned, ledger);
+
+    // Check if source was modified during transfer
+    if (result == 0) {
+        WIN32_FILE_ATTRIBUTE_DATA src_attr_after = {};
+        if (GetFileAttributesExW(cfg.source, GetFileExInfoStandard, &src_attr_after)) {
+            if (CompareFileTime(&source_mtime_before, &src_attr_after.ftLastWriteTime) != 0) {
+                lc_warn(L"WARNING: Source file was modified during transfer!");
+                lc_warn(L"The destination may contain a mix of old and new data.");
+                lc_warn(L"Re-run the copy with --force to ensure consistency.");
+            }
+        }
+    }
 
     // Post-copy verification
     if (result == 0 && cfg.verify_after) {

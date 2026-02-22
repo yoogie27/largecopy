@@ -207,6 +207,51 @@ largecopy is designed for zero data loss in hostile network environments:
 - Summary shows exactly which chunks failed
 - `largecopy resume` retries only failed/pending chunks
 
+**Source modification detection:**
+- largecopy records the source file's last-write timestamp before starting
+- After the transfer, it checks whether the timestamp changed
+- If the source was modified during the copy, a warning is printed — the destination may contain a mix of old and new data
+
+---
+
+## Data integrity
+
+### How safe is my copy?
+
+The safety of a largecopy transfer depends on the **direction** and **storage type**. Understanding the differences helps you choose the right approach for critical data.
+
+### Local to local / Remote to local
+
+**This is the safest direction.** Writes to local storage use `FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH`, which bypasses the filesystem cache and commits data directly to stable storage. When a chunk is marked as transferred, the data is physically on disk.
+
+### Local to remote (network share)
+
+Writing to a remote SMB server is inherently less safe than writing locally. When Windows reports a write as "complete" for a network destination, it means the SMB client has sent the data — not that the server has committed it to disk. If the remote server crashes or loses power before flushing its cache, data that the ledger considers transferred may be lost.
+
+largecopy mitigates this by flushing the destination at the end of the transfer, but individual chunk writes during the copy rely on the server's own caching policy.
+
+**For critical transfers to a remote destination, use `--verify-after`:**
+
+```cmd
+largecopy copy D:\important.bak \\server\share\important.bak --verify-after
+```
+
+This re-reads the entire destination file after the copy and verifies every chunk's hash. It roughly doubles the transfer time but guarantees end-to-end correctness.
+
+### Recommendation
+
+When possible, **prefer pulling files (remote to local) over pushing (local to remote)**. The receiving machine has full control over write durability when the destination is a local disk. If you must push to a remote target and the data is critical, always use `--verify-after`.
+
+### What the checksums guarantee
+
+During the copy, each chunk is hashed (xxHash3-128) from the source data in memory before being written. These hashes are stored in the ledger and enable:
+
+- **Resume safety** — on restart, only chunks not yet marked as transferred are re-sent
+- **Post-copy verification** — `--verify-after` or `largecopy verify` re-reads the destination and compares against stored hashes
+- **Corruption detection** — any bit flip, truncation, or I/O error is caught by hash mismatch
+
+The checksums do **not** protect against source file modification during the copy. If the source changes mid-transfer, largecopy detects the timestamp change and warns you, but individual chunks may contain a mix of old and new data.
+
 ---
 
 ## Commands
@@ -348,7 +393,7 @@ Shows the auto-detected environment, auto-configured settings, and exits without
 ### Compile
 
 ```cmd
-build.bat
+build-local.bat
 ```
 
 Output: `build\largecopy.exe` (~200 KB, fully static, no external dependencies).
@@ -424,7 +469,7 @@ all_done() = all chunks Verified/Sparse/DeltaMatch
 
 ```
 largecopy/
-├── build.bat               Build script
+├── build-local.bat         Build script
 ├── LICENSE                  MIT License
 ├── vendor/
 │   └── xxhash.h            xxHash (header-only, vendored)

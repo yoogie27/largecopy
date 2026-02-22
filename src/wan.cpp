@@ -185,6 +185,16 @@ bool ConnPool::reopen(HANDLE iocp, ULONG_PTR key) {
     return true;
 }
 
+void ConnPool::flush() {
+    if (handles_) {
+        for (int i = 0; i < count_; i++) {
+            if (handles_[i] != INVALID_HANDLE_VALUE) {
+                FlushFileBuffers(handles_[i]);
+            }
+        }
+    }
+}
+
 void ConnPool::close() {
     if (handles_) {
         for (int i = 0; i < count_; i++) {

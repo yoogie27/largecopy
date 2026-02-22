@@ -31,6 +31,9 @@ public:
     // Cancel I/O on all handles, close them, reopen.
     bool reopen(HANDLE iocp, ULONG_PTR key);
 
+    // Flush all handles (FlushFileBuffers on each).
+    void flush();
+
     // Close all handles.
     void close();
 
