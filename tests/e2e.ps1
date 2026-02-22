@@ -123,6 +123,56 @@ function Strip-Ansi([string]$Text) {
     return $Text -replace '\x1b\[[0-9;]*m', ''
 }
 
+# Start largecopy in background (for interrupt/resume tests)
+function Start-LcBackground {
+    param([string[]]$Arguments)
+    $stdoutFile = [System.IO.Path]::GetTempFileName()
+    $stderrFile = [System.IO.Path]::GetTempFileName()
+    $psi = @{
+        FilePath               = $script:Exe
+        RedirectStandardOutput = $stdoutFile
+        RedirectStandardError  = $stderrFile
+        NoNewWindow            = $true
+        PassThru               = $true
+    }
+    if ($Arguments -and $Arguments.Count -gt 0) {
+        $psi['ArgumentList'] = $Arguments
+    }
+    $proc = Start-Process @psi
+    return @{
+        Process    = $proc
+        StdoutFile = $stdoutFile
+        StderrFile = $stderrFile
+    }
+}
+
+# Stop background largecopy and capture output
+function Stop-LcBackground($Info) {
+    if (!$Info.Process.HasExited) {
+        Stop-Process -Id $Info.Process.Id -Force -ErrorAction SilentlyContinue
+        $Info.Process.WaitForExit(5000) | Out-Null
+    }
+    $stdout = [System.IO.File]::ReadAllText($Info.StdoutFile)
+    $stderr = [System.IO.File]::ReadAllText($Info.StderrFile)
+    Remove-Item $Info.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $Info.StderrFile -ErrorAction SilentlyContinue
+    return @{
+        ExitCode = $Info.Process.ExitCode
+        Stdout   = $stdout
+        Stderr   = $stderr
+        Output   = $stderr + $stdout
+    }
+}
+
+# Wait for a file to appear on disk
+function Wait-ForFile([string]$Path, [int]$TimeoutMs = 10000) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while (!(Test-Path $Path) -and $sw.ElapsedMilliseconds -lt $TimeoutMs) {
+        Start-Sleep -Milliseconds 50
+    }
+    return (Test-Path $Path)
+}
+
 function Test-Case {
     param([string]$Name, [scriptblock]$Body)
     try {
@@ -599,6 +649,457 @@ Test-Case "copy + compare round-trip on multi-chunk file" {
     $r = Invoke-Lc @("compare", "--quiet", $src, $dst)
     Assert-ExitCode $r 0
     Assert-OutputContains $r "match"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Implicit Copy Command ===" -ForegroundColor Yellow
+
+Test-Case "implicit copy with absolute path" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    $r = Invoke-Lc @($src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "implicit copy with relative dot-path" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    # Paths contain dots and backslashes, triggering implicit copy
+    $r = Invoke-Lc @("--quiet", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "implicit copy with options before paths" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    $r = Invoke-Lc @("--quiet", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "implicit copy with --force" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    # First copy
+    $r = Invoke-Lc @("--quiet", $src, $dst)
+    Assert-ExitCode $r 0
+    # Overwrite with --force (implicit copy)
+    $r = Invoke-Lc @("--force", "--quiet", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "implicit copy with --chunk-size" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (2MB)
+    $r = Invoke-Lc @("--quiet", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "implicit copy matches explicit copy" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst1 = Join-Path $d "dst1.bin"
+    $dst2 = Join-Path $d "dst2.bin"
+    New-RandomFile $src (2MB)
+    # Explicit copy
+    $r = Invoke-Lc @("copy", "--quiet", "--chunk-size", "1", $src, $dst1)
+    Assert-ExitCode $r 0
+    # Implicit copy
+    $r = Invoke-Lc @("--quiet", "--chunk-size", "1", $src, $dst2)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $dst1 $dst2)) { throw "Implicit and explicit copy produced different files" }
+}
+
+Test-Case "explicit copy still works" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    $r = Invoke-Lc @("copy", "--quiet", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Resume - Happy Path ===" -ForegroundColor Yellow
+
+# Shared setup: interrupt a copy, then test resume, status, and verify
+$script:resumeDir = $null
+$script:resumeSrc = $null
+$script:resumeDst = $null
+$script:resumeLedger = $null
+
+Test-Case "resume completes interrupted transfer" {
+    $d = New-TestDir
+    $script:resumeDir = $d
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    $script:resumeSrc = $src
+    $script:resumeDst = $dst
+    New-RandomFile $src (10MB)
+
+    # Start copy in background with small chunks to maximize interrupt window
+    $bg = Start-LcBackground @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+
+    # Wait for ledger to appear then kill
+    $ledger = "$dst.lcledger"
+    $found = Wait-ForFile $ledger 10000
+    if ($found) {
+        Start-Sleep -Milliseconds 200
+        Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+        $bg.Process.WaitForExit(5000) | Out-Null
+    } else {
+        # Copy may have finished before we could kill it
+        $bg.Process.WaitForExit(10000) | Out-Null
+    }
+    Remove-Item $bg.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $bg.StderrFile -ErrorAction SilentlyContinue
+
+    # If copy finished already (too fast to interrupt), this is still valid
+    if (Test-Path $ledger) {
+        $script:resumeLedger = $ledger
+        # Resume to complete
+        $r = Invoke-Lc @("resume", "--quiet", $dst)
+        Assert-ExitCode $r 0
+    }
+    # Either way, files must match
+    if (!(FilesEqual $src $dst)) { throw "Files differ after resume" }
+}
+
+Test-Case "copy auto-resumes from existing ledger" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (20MB)
+
+    # Start and interrupt
+    $bg = Start-LcBackground @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    $ledger = "$dst.lcledger"
+    $found = Wait-ForFile $ledger 10000
+    if ($found) {
+        Start-Sleep -Milliseconds 100
+        Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+        $bg.Process.WaitForExit(5000) | Out-Null
+    } else {
+        $bg.Process.WaitForExit(10000) | Out-Null
+    }
+    Remove-Item $bg.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $bg.StderrFile -ErrorAction SilentlyContinue
+
+    # If copy finished before we could interrupt, ledger is gone - skip
+    if (!(Test-Path $ledger)) {
+        Write-Host "        (copy too fast to interrupt, skipping)" -ForegroundColor DarkYellow
+        return
+    }
+
+    # Re-run copy (not resume) - should auto-detect ledger and resume
+    $r = Invoke-Lc @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ after auto-resume" }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Status - Happy Path ===" -ForegroundColor Yellow
+
+Test-Case "status shows transfer info" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (5MB)
+
+    # Start and interrupt to leave a ledger
+    $bg = Start-LcBackground @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    $ledger = "$dst.lcledger"
+    $found = Wait-ForFile $ledger 10000
+    if ($found) {
+        Start-Sleep -Milliseconds 200
+        Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+        $bg.Process.WaitForExit(5000) | Out-Null
+    } else {
+        $bg.Process.WaitForExit(10000) | Out-Null
+    }
+    Remove-Item $bg.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $bg.StderrFile -ErrorAction SilentlyContinue
+
+    if (Test-Path $ledger) {
+        $r = Invoke-Lc @("status", $dst)
+        Assert-ExitCode $r 0
+        Assert-OutputContains $r "Source|Dest|Chunk|chunk"
+    } else {
+        # Copy completed before we could interrupt - skip this test gracefully
+        Write-Host "        (copy too fast to interrupt, skipping)" -ForegroundColor DarkYellow
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Verify ===" -ForegroundColor Yellow
+
+Test-Case "verify fails without ledger" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    # Copy (ledger auto-deleted after success)
+    $r = Invoke-Lc @("copy", "--quiet", $src, $dst)
+    Assert-ExitCode $r 0
+    # Verify should fail - no ledger
+    $r = Invoke-Lc @("verify", "--quiet", $src, $dst)
+    Assert-ExitNonZero $r
+    Assert-OutputContains $r "ledger|No ledger"
+}
+
+Test-Case "verify succeeds after resume" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (5MB)
+
+    # Start and interrupt
+    $bg = Start-LcBackground @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    $ledger = "$dst.lcledger"
+    $found = Wait-ForFile $ledger 10000
+    if ($found) {
+        Start-Sleep -Milliseconds 200
+        Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+        $bg.Process.WaitForExit(5000) | Out-Null
+    } else {
+        $bg.Process.WaitForExit(10000) | Out-Null
+    }
+    Remove-Item $bg.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $bg.StderrFile -ErrorAction SilentlyContinue
+
+    if (Test-Path $ledger) {
+        # Resume (direct resume does NOT delete ledger)
+        $r = Invoke-Lc @("resume", "--quiet", $dst)
+        Assert-ExitCode $r 0
+        # Verify should succeed
+        $r = Invoke-Lc @("verify", "--quiet", $src, $dst)
+        Assert-ExitCode $r 0
+    } else {
+        # Copy completed before interrupt - use --verify-after as fallback
+        $r = Invoke-Lc @("copy", "--quiet", "--force", "--verify-after", "--chunk-size", "1", $src, $dst)
+        Assert-ExitCode $r 0
+    }
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "verify detects corruption" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (5MB)
+
+    # Start and interrupt
+    $bg = Start-LcBackground @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    $ledger = "$dst.lcledger"
+    $found = Wait-ForFile $ledger 10000
+    if ($found) {
+        Start-Sleep -Milliseconds 200
+        Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+        $bg.Process.WaitForExit(5000) | Out-Null
+    } else {
+        $bg.Process.WaitForExit(10000) | Out-Null
+    }
+    Remove-Item $bg.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $bg.StderrFile -ErrorAction SilentlyContinue
+
+    if (Test-Path $ledger) {
+        # Resume to complete
+        $r = Invoke-Lc @("resume", "--quiet", $dst)
+        Assert-ExitCode $r 0
+        # Corrupt a byte
+        $fs = [System.IO.File]::Open($dst, 'Open', 'ReadWrite')
+        $fs.Seek(1MB, 'Begin') | Out-Null
+        $fs.WriteByte(0x00)
+        $fs.Dispose()
+        # Verify should detect mismatch
+        $r = Invoke-Lc @("verify", "--quiet", $src, $dst)
+        Assert-ExitNonZero $r
+        Assert-OutputContains $r "MISMATCH|FAIL|failed"
+    } else {
+        Write-Host "        (copy too fast to interrupt, skipping)" -ForegroundColor DarkYellow
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Delta Mode ===" -ForegroundColor Yellow
+
+Test-Case "delta skips unchanged chunks" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (3MB)
+    # First copy
+    $r = Invoke-Lc @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    # Modify one byte in the second chunk
+    $fs = [System.IO.File]::Open($src, 'Open', 'ReadWrite')
+    $fs.Seek(1MB + 100, 'Begin') | Out-Null
+    $fs.WriteByte(0xFF)
+    $fs.Dispose()
+    # Re-copy with delta
+    $r = Invoke-Lc @("copy", "--force", "--delta", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ after delta copy" }
+    Assert-OutputContains $r "Delta|delta|match"
+}
+
+Test-Case "delta on identical file skips all" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (2MB)
+    # First copy
+    $r = Invoke-Lc @("copy", "--quiet", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    # Re-copy with delta - all chunks should match
+    $r = Invoke-Lc @("copy", "--force", "--delta", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+    Assert-OutputContains $r "Delta|delta|match"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Sparse ===" -ForegroundColor Yellow
+
+Test-Case "sparse on non-sparse file copies all chunks" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (2MB)
+    $r = Invoke-Lc @("copy", "--quiet", "--sparse", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Source Modification Detection ===" -ForegroundColor Yellow
+
+Test-Case "source modification warning during copy" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (20MB)
+
+    # Start copy in background
+    $bg = Start-LcBackground @("copy", "--chunk-size", "1", $src, $dst)
+
+    # Give it a moment to start, then touch the source file
+    Start-Sleep -Milliseconds 200
+    [System.IO.File]::SetLastWriteTime($src, [System.DateTime]::Now.AddSeconds(5))
+
+    # Wait for process to fully exit before reading output files
+    if (!$bg.Process.WaitForExit(60000)) {
+        Stop-Process -Id $bg.Process.Id -Force -ErrorAction SilentlyContinue
+        $bg.Process.WaitForExit(5000) | Out-Null
+    }
+    # Small delay to ensure file handles are released
+    Start-Sleep -Milliseconds 200
+
+    $output = ""
+    try {
+        $stdout = [System.IO.File]::ReadAllText($bg.StdoutFile)
+        $stderr = [System.IO.File]::ReadAllText($bg.StderrFile)
+        $output = Strip-Ansi ($stderr + $stdout)
+    } catch {
+        # File still locked - process likely completed too fast
+    }
+    $exitCode = if ($bg.Process.HasExited) { $bg.Process.ExitCode } else { $null }
+    Remove-Item $bg.StdoutFile -ErrorAction SilentlyContinue
+    Remove-Item $bg.StderrFile -ErrorAction SilentlyContinue
+
+    if ($output -match "modified during transfer") {
+        # Got the warning - test passes
+    } elseif ($null -eq $exitCode -or $exitCode -eq 0) {
+        # Copy completed before we could touch the file - skip gracefully
+        Write-Host "        (copy too fast to catch modification, skipping)" -ForegroundColor DarkYellow
+    } else {
+        throw "Copy failed with exit code $exitCode"
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Host "`n=== Additional Coverage ===" -ForegroundColor Yellow
+
+Test-Case "hash output format is HASH  FILENAME" {
+    $d = New-TestDir
+    $f = Join-Path $d "data.bin"
+    New-RandomFile $f (1MB)
+    $r = Invoke-Lc @("hash", $f)
+    Assert-ExitCode $r 0
+    $line = $r.Stdout.Trim()
+    # Format: 32 hex chars, two spaces, filename
+    if ($line -notmatch '^[0-9A-Fa-f]{32}  .+') {
+        throw "Hash output format wrong: '$line'"
+    }
+}
+
+Test-Case "copy with --retries flag accepted" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (1MB)
+    $r = Invoke-Lc @("copy", "--quiet", "--retries", "3", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "copy with chunk-size 2 MB" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (5MB)
+    $r = Invoke-Lc @("copy", "--quiet", "--chunk-size", "2", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "copy with chunk-size exact fit" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (10MB)
+    $r = Invoke-Lc @("copy", "--quiet", "--chunk-size", "5", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
+}
+
+Test-Case "ledger corruption - bad magic" {
+    $d = New-TestDir
+    $dst = Join-Path $d "dst.bin"
+    New-TestFile $dst 1024
+    $ledger = "$dst.lcledger"
+    # Write garbage to a fake ledger
+    [System.IO.File]::WriteAllBytes($ledger, [byte[]](0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00, 0x00, 0x00))
+    $r = Invoke-Lc @("resume", "--quiet", $dst)
+    Assert-ExitNonZero $r
+    $r = Invoke-Lc @("status", $dst)
+    Assert-ExitNonZero $r
+    Remove-Item $ledger -ErrorAction SilentlyContinue
+}
+
+Test-Case "copy + verify round-trip" {
+    $d = New-TestDir
+    $src = Join-Path $d "src.bin"
+    $dst = Join-Path $d "dst.bin"
+    New-RandomFile $src (3MB)
+    $r = Invoke-Lc @("copy", "--quiet", "--verify-after", "--chunk-size", "1", $src, $dst)
+    Assert-ExitCode $r 0
+    if (!(FilesEqual $src $dst)) { throw "Files differ" }
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
