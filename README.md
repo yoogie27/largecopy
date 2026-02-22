@@ -1,5 +1,23 @@
 # largecopy
 
+<p align="center">
+  <img src="https://github.com/yoogie27/largecopy/raw/main/logo/logo.jpg" alt="LargeCopy Logo" width="128" height="128">
+</p>
+
+<p align="center">
+  <strong>Fast. Reliable. Restartable.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Windows-0078D4?logoColor=white" alt="Windows" />
+  <img src="https://img.shields.io/badge/Alternative_to-Robocopy-orange" alt="AlternativeTo" />
+  <a href="https://opensource.org/licenses/MIT" target="_blank">
+    <img src="https://img.shields.io/badge/License-MIT-yellow" alt="AlternativeTo" /></a>
+</p>
+
+---
+
+
 ### High-Performance File Copy Engine for Windows
 
 > *When you need to move a single massive file across a network — fast, reliably, and restartably.*
@@ -8,7 +26,6 @@
 
 Built from scratch in C++ with the Win32 API. No frameworks, no runtime dependencies, no external DLLs. A single ~200 KB executable.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
