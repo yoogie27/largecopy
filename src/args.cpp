@@ -25,10 +25,10 @@ void print_usage() {
     int len = swprintf(buf, 4096,
         L"largecopy v%s - High Performance File Copy Engine\n"
         L"\n"
-        L"Usage: largecopy <command> [options] <source> <destination>\n"
+        L"Usage: largecopy [command] [options] <source> <destination>\n"
         L"\n"
-        L"Commands:\n"
-        L"  copy      Copy file from source to destination\n"
+        L"Commands (optional - 'copy' is the default):\n"
+        L"  copy      Copy file from source to destination (default)\n"
         L"  resume    Resume an interrupted transfer (provide .lcledger path)\n"
         L"  verify    Verify destination against source using stored hashes\n"
         L"  status    Show status of a transfer ledger\n"
@@ -60,12 +60,12 @@ void print_usage() {
         L"  -h, --help          Show this help message\n"
         L"\n"
         L"Examples:\n"
-        L"  largecopy copy D:\\backup.vhdx \\\\server\\share\\backup.vhdx\n"
-        L"  largecopy copy \\\\server\\data\\big.zip E:\\local\\big.zip\n"
+        L"  largecopy D:\\backup.vhdx \\\\server\\share\\backup.vhdx\n"
+        L"  largecopy \\\\server\\data\\big.zip E:\\local\\big.zip\n"
         L"  largecopy resume E:\\local\\big.zip.lcledger\n"
         L"  largecopy verify D:\\backup.vhdx \\\\server\\share\\backup.vhdx\n"
-        L"  largecopy copy --wan D:\\big.vhdx \\\\remote\\share\\big.vhdx\n"
-        L"  largecopy copy --wan --connections 8 --sparse D:\\vm.vhdx \\\\nas\\bak\\vm.vhdx\n"
+        L"  largecopy --wan D:\\big.vhdx \\\\remote\\share\\big.vhdx\n"
+        L"  largecopy --wan --connections 8 --sparse D:\\vm.vhdx \\\\nas\\bak\\vm.vhdx\n"
         L"  largecopy compare D:\\backup.vhdx \\\\server\\share\\backup.vhdx\n"
         L"  largecopy hash D:\\backup.vhdx\n"
         L"  largecopy bench \\\\server\\share\\\n",
@@ -81,8 +81,10 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
         return false;
     }
 
-    // Parse command
+    // Parse command (or infer 'copy' when first arg looks like a path)
     const wchar_t* cmd = argv[1];
+    int args_start = 2;  // index where options/positional args begin
+
     if (_wcsicmp(cmd, L"copy") == 0)        cfg.command = Command::Copy;
     else if (_wcsicmp(cmd, L"resume") == 0)  cfg.command = Command::Resume;
     else if (_wcsicmp(cmd, L"verify") == 0)  cfg.command = Command::Verify;
@@ -94,8 +96,19 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
              _wcsicmp(cmd, L"--help") == 0) {
         cfg.command = Command::Help;
         return true;
+    } else if (cmd[0] == L'-') {
+        // Starts with dash: treat as option for implicit copy
+        cfg.command = Command::Copy;
+        args_start = 1;
+    } else if (wcschr(cmd, L'\\') || wcschr(cmd, L'/') ||
+               wcschr(cmd, L':')  || wcschr(cmd, L'.')) {
+        // Looks like a path: implicit copy, argv[1] is the source
+        cfg.command = Command::Copy;
+        args_start = 1;
     } else {
-        lc_error(L"Unknown command: %s", cmd);
+        lc_error(L"Unknown command: %s\n"
+                 L"Hint: you can omit 'copy' when providing paths directly:\n"
+                 L"  largecopy <source> <destination>", cmd);
         return false;
     }
 
@@ -104,7 +117,7 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
     int pos_count = 0;
 
     // Walk remaining args
-    for (int i = 2; i < argc; i++) {
+    for (int i = args_start; i < argc; i++) {
         const wchar_t* arg = argv[i];
 
         if (wcscmp(arg, L"--chunk-size") == 0) {

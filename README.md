@@ -30,10 +30,10 @@ You have a 100 GB database backup, a VM snapshot, or a disk image. You need to m
 
 ```cmd
 :: Copy a file (you must specify the full destination filename)
-largecopy copy D:\backup.vhdx \\server\share\backup.vhdx
+largecopy D:\backup.vhdx \\server\share\backup.vhdx
 
 :: If interrupted, just run the same command again — it resumes automatically
-largecopy copy D:\backup.vhdx \\server\share\backup.vhdx
+largecopy D:\backup.vhdx \\server\share\backup.vhdx
 
 :: Compare two files without downloading
 largecopy compare D:\backup.vhdx \\server\share\backup.vhdx
@@ -48,17 +48,17 @@ Unlike robocopy, which accepts a destination *directory*, largecopy requires the
 
 ```cmd
 :: Correct — full path with filename
-largecopy copy D:\data.bak \\server\share\data.bak
+largecopy D:\data.bak \\server\share\data.bak
 
 :: Wrong — this won't work
-largecopy copy D:\data.bak \\server\share\
+largecopy D:\data.bak \\server\share\
 ```
 
 ---
 
 ## What it does automatically
 
-You don't need to understand any of the internals. Just run `largecopy copy <source> <dest>` and it handles everything:
+You don't need to understand any of the internals. Just run `largecopy <source> <dest>` and it handles everything:
 
 **Auto-detection:**
 - Identifies source and destination storage type (NVMe, SSD, HDD, network share)
@@ -108,7 +108,7 @@ The ledger is memory-mapped, so state changes are instant and survive crashes. I
 
 ### Resuming
 
-When you run `largecopy copy` and the destination already exists with a valid ledger:
+When you run `largecopy` and the destination already exists with a valid ledger:
 
 1. largecopy finds the ledger (stored locally in `%TEMP%\largecopy\` for network destinations, or next to the file for local copies)
 2. Validates it matches the same source file (size + path hash)
@@ -233,7 +233,7 @@ largecopy mitigates this by flushing the destination at the end of the transfer,
 **For critical transfers to a remote destination, use `--verify-after`:**
 
 ```cmd
-largecopy copy D:\important.bak \\server\share\important.bak --verify-after
+largecopy D:\important.bak \\server\share\important.bak --verify-after
 ```
 
 This re-reads the entire destination file after the copy and verifies every chunk's hash. It roughly doubles the transfer time but guarantees end-to-end correctness.
@@ -274,7 +274,7 @@ The checksums do **not** protect against source file modification during the cop
 ### Copy a database backup to a file server
 
 ```cmd
-largecopy copy D:\backups\prod.bak \\fileserver\backups\prod.bak
+largecopy D:\backups\prod.bak \\fileserver\backups\prod.bak
 ```
 
 largecopy auto-detects NVMe source → 10 GbE network destination, opens multiple SMB connections, enables adaptive pipeline tuning, and transfers at full link speed. If the network drops mid-transfer, Ctrl+C or just wait — the ledger persists. Re-run the same command to resume.
@@ -282,7 +282,7 @@ largecopy auto-detects NVMe source → 10 GbE network destination, opens multipl
 ### Copy a VM snapshot over VPN
 
 ```cmd
-largecopy copy E:\VMs\server.vhdx \\remote-dc\share\server.vhdx
+largecopy E:\VMs\server.vhdx \\remote-dc\share\server.vhdx
 ```
 
 High-latency link? largecopy measures RTT, calculates bandwidth-delay product, and sets pipeline depth and connection count accordingly. Adaptive tuning adjusts in real-time as conditions change.
@@ -290,8 +290,8 @@ High-latency link? largecopy measures RTT, calculates bandwidth-delay product, a
 ### Resume after interruption
 
 ```cmd
-:: Just run the same copy command again
-largecopy copy D:\backups\prod.bak \\fileserver\backups\prod.bak
+:: Just run the same command again
+largecopy D:\backups\prod.bak \\fileserver\backups\prod.bak
 ```
 
 Output:
@@ -352,7 +352,7 @@ Writes and reads 1 GB to measure sequential throughput. Useful for validating ne
 ### Dry run (see what would happen)
 
 ```cmd
-largecopy copy --dry-run D:\big.vhdx \\server\share\big.vhdx
+largecopy --dry-run D:\big.vhdx \\server\share\big.vhdx
 ```
 
 Shows the auto-detected environment, auto-configured settings, and exits without copying. Useful for understanding what largecopy will do.
