@@ -1185,22 +1185,28 @@ int CopyEngine::run_copy(const Config& cfg) {
     if (tuned.wan_mode && env.network.is_remote) {
         const wchar_t* remote_path = env.dest.is_remote ? tuned.dest : tuned.source;
 
-        // Use effective bandwidth (not raw PHY rate) for BDP calculation
+        // Pass link speed for comparison; measure_rtt will probe actual throughput
         uint64_t bw = env.network.effective_bw_bps > 0
                      ? env.network.effective_bw_bps : env.network.link_speed_bps;
         RTTResult rtt = measure_rtt(remote_path, bw, tuned.chunk_size);
         if (rtt.rtt_ms > 0) {
             if (!cfg.quiet) {
-                wchar_t bdp_buf[64];
+                wchar_t bdp_buf[64], bw_buf[64];
                 format_bytes(static_cast<uint64_t>(rtt.bdp_bytes), bdp_buf, 64);
-                lc_log(L"RTT:     %.1f ms | BDP: %s", rtt.rtt_ms, bdp_buf);
+                format_rate(rtt.measured_bw_bps / 8.0, bw_buf, 64);
+                lc_log(L"RTT:     %.1f ms | BDP: %s | Path: %s", rtt.rtt_ms, bdp_buf, bw_buf);
             }
 
-            // Only raise values from RTT - never lower what auto_configure set
-            if (rtt.suggested_inflight > tuned.inflight)
+            // Apply RTT-based suggestions: lower if measured path is slower than
+            // what auto_configure assumed, raise if BDP demands more.
+            if (rtt.suggested_inflight != tuned.inflight) {
                 tuned.inflight = rtt.suggested_inflight;
-            if (rtt.suggested_connections > tuned.connections)
+            }
+            if (rtt.suggested_connections < tuned.connections) {
                 tuned.connections = rtt.suggested_connections;
+            } else if (rtt.suggested_connections > tuned.connections) {
+                tuned.connections = rtt.suggested_connections;
+            }
         }
     }
 
@@ -1390,18 +1396,21 @@ int CopyEngine::run_resume(const Config& cfg) {
 
     // WAN mode: measure RTT and refine
     if (tuned.wan_mode && env.network.is_remote) {
+        const wchar_t* remote_path = env.dest.is_remote ? hdr->dest_path : hdr->source_path;
         uint64_t bw = env.network.effective_bw_bps > 0
                      ? env.network.effective_bw_bps : env.network.link_speed_bps;
-        RTTResult rtt = measure_rtt(hdr->dest_path, bw, tuned.chunk_size);
+        RTTResult rtt = measure_rtt(remote_path, bw, tuned.chunk_size);
         if (rtt.rtt_ms > 0 && !cfg.quiet) {
-            wchar_t bdp_buf[64];
+            wchar_t bdp_buf[64], bw_buf[64];
             format_bytes(static_cast<uint64_t>(rtt.bdp_bytes), bdp_buf, 64);
-            lc_log(L"RTT: %.1f ms | BDP: %s", rtt.rtt_ms, bdp_buf);
+            format_rate(rtt.measured_bw_bps / 8.0, bw_buf, 64);
+            lc_log(L"RTT: %.1f ms | BDP: %s | Path: %s", rtt.rtt_ms, bdp_buf, bw_buf);
         }
-        // Only raise values from RTT - never lower what auto_configure set
-        if (rtt.suggested_inflight > tuned.inflight)
+        if (rtt.suggested_inflight != tuned.inflight)
             tuned.inflight = rtt.suggested_inflight;
-        if (rtt.suggested_connections > tuned.connections)
+        if (rtt.suggested_connections < tuned.connections)
+            tuned.connections = rtt.suggested_connections;
+        else if (rtt.suggested_connections > tuned.connections)
             tuned.connections = rtt.suggested_connections;
     }
 

@@ -46,6 +46,30 @@ static void disable_stats(MIB_TCPROW* row) {
     SetPerTcpConnectionEStats(row, TcpConnectionEstatsRec, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
 }
 
+// ── Resolve server name to IPv4 address (network byte order) ────────────────
+static DWORD resolve_server_ip(const wchar_t* server_name) {
+    if (!server_name || !server_name[0]) return 0;
+
+    // Ensure Winsock is initialized (safe to call multiple times)
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+
+    char narrow[256] = {};
+    WideCharToMultiByte(CP_UTF8, 0, server_name, -1, narrow, 256, nullptr, nullptr);
+
+    ADDRINFOA hints = {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    ADDRINFOA* result = nullptr;
+    if (getaddrinfo(narrow, "445", &hints, &result) != 0 || !result)
+        return 0;
+
+    DWORD ip = reinterpret_cast<sockaddr_in*>(result->ai_addr)->sin_addr.s_addr;
+    freeaddrinfo(result);
+    return ip;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Public API
 // ═══════════════════════════════════════════════════════════════════════════
@@ -55,6 +79,10 @@ bool netstats_init(const wchar_t* server_name) {
     g_available = false;
 
     if (!server_name || !server_name[0]) return false;
+
+    // Resolve server to IPv4 address
+    DWORD server_ip = resolve_server_ip(server_name);
+    if (server_ip == 0) return false;
 
     // Get TCP table
     ULONG size = 0;
@@ -71,13 +99,14 @@ bool netstats_init(const wchar_t* server_name) {
         return false;
     }
 
-    DWORD pid = GetCurrentProcessId();
     DWORD smb_port = htons(445);
 
-    // Find established connections from our PID to port 445
+    // Find established SMB connections to the server by IP address.
+    // SMB connections are owned by the System process (PID 4), not by the
+    // application — so we match by remote IP + port 445 instead of PID.
     for (DWORD i = 0; i < table->dwNumEntries && g_row_count < MAX_TRACKED; i++) {
         const MIB_TCPROW2& r = table->table[i];
-        if (r.dwOwningPid == pid &&
+        if (r.dwRemoteAddr == server_ip &&
             r.dwRemotePort == smb_port &&
             r.dwState == MIB_TCP_STATE_ESTAB) {
             g_rows[g_row_count] = to_row(r);

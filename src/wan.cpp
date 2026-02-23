@@ -357,32 +357,31 @@ void AdaptiveInflight::force_reduce(int new_target) {
 RTTResult measure_rtt(const wchar_t* remote_path, uint64_t link_speed_bps, uint32_t chunk_size) {
     RTTResult result = {};
     result.rtt_ms = 0;
+    result.measured_bw_bps = 0;
     result.suggested_inflight = DEFAULT_INFLIGHT;
     result.suggested_connections = DEFAULT_CONNECTIONS;
 
-    // Measure RTT by timing a small synchronous file read
+    LARGE_INTEGER freq;
+    QueryPerformanceFrequency(&freq);
+
+    // ── Phase 1: RTT measurement (small reads, dominated by round-trip) ──
     HANDLE h = CreateFileW(remote_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                             nullptr, OPEN_EXISTING,
                             FILE_FLAG_NO_BUFFERING, nullptr);
     if (h == INVALID_HANDLE_VALUE) return result;
 
-    // Allocate a sector-aligned buffer for one sector
     uint8_t* buf = static_cast<uint8_t*>(
         VirtualAlloc(nullptr, SECTOR_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
     if (!buf) { CloseHandle(h); return result; }
-
-    // Do 5 reads and take the median
-    LARGE_INTEGER freq, start, end;
-    QueryPerformanceFrequency(&freq);
 
     double times[5] = {};
     int valid = 0;
 
     for (int i = 0; i < 5; i++) {
-        // Seek back to start
         LARGE_INTEGER zero = {};
         SetFilePointerEx(h, zero, nullptr, FILE_BEGIN);
 
+        LARGE_INTEGER start, end;
         QueryPerformanceCounter(&start);
 
         DWORD bytes_read = 0;
@@ -414,15 +413,91 @@ RTTResult measure_rtt(const wchar_t* remote_path, uint64_t link_speed_bps, uint3
 
     result.rtt_ms = times[valid / 2]; // median
 
-    // Calculate BDP: bandwidth * RTT
-    double link_bytes_per_sec = static_cast<double>(link_speed_bps) / 8.0;
-    result.bdp_bytes = link_bytes_per_sec * (result.rtt_ms / 1000.0);
+    // ── Phase 2: Throughput probe (bulk read to measure actual path bandwidth) ──
+    // The NIC link speed (e.g., 10 Gbps) may vastly exceed the actual WAN path
+    // bandwidth (e.g., 350 Mbps).  Read a 1 MB block and time it to measure
+    // real throughput, then use THAT for BDP instead of the link speed.
+    static constexpr DWORD PROBE_SIZE = 1024 * 1024;  // 1 MB
+    double measured_bw_bytes_per_sec = 0;
 
-    // Suggest inflight: enough to fill the pipe
+    h = CreateFileW(remote_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    nullptr, OPEN_EXISTING,
+                    FILE_FLAG_SEQUENTIAL_SCAN, nullptr);  // buffered for max throughput
+    if (h != INVALID_HANDLE_VALUE) {
+        buf = static_cast<uint8_t*>(
+            VirtualAlloc(nullptr, PROBE_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        if (buf) {
+            double probe_times[3] = {};
+            int probe_valid = 0;
+
+            for (int i = 0; i < 3; i++) {
+                LARGE_INTEGER zero = {};
+                SetFilePointerEx(h, zero, nullptr, FILE_BEGIN);
+
+                LARGE_INTEGER start, end;
+                QueryPerformanceCounter(&start);
+
+                DWORD total_read = 0;
+                while (total_read < PROBE_SIZE) {
+                    DWORD bytes_read = 0;
+                    DWORD to_read = PROBE_SIZE - total_read;
+                    if (!ReadFile(h, buf + total_read, to_read, &bytes_read, nullptr) || bytes_read == 0)
+                        break;
+                    total_read += bytes_read;
+                }
+
+                QueryPerformanceCounter(&end);
+
+                if (total_read >= PROBE_SIZE) {
+                    double secs = static_cast<double>(end.QuadPart - start.QuadPart) /
+                                  static_cast<double>(freq.QuadPart);
+                    if (secs > 0.0001) {
+                        probe_times[probe_valid++] = static_cast<double>(total_read) / secs;
+                    }
+                }
+            }
+
+            if (probe_valid > 0) {
+                // Sort and take median
+                for (int i = 1; i < probe_valid; i++) {
+                    double key = probe_times[i];
+                    int j = i - 1;
+                    while (j >= 0 && probe_times[j] > key) {
+                        probe_times[j + 1] = probe_times[j];
+                        j--;
+                    }
+                    probe_times[j + 1] = key;
+                }
+                measured_bw_bytes_per_sec = probe_times[probe_valid / 2];
+            }
+
+            VirtualFree(buf, 0, MEM_RELEASE);
+        }
+        CloseHandle(h);
+    }
+
+    // ── BDP calculation using measured bandwidth ──
+    double link_bytes_per_sec = static_cast<double>(link_speed_bps) / 8.0;
+
+    // Use measured throughput for BDP if we got a valid measurement.
+    // The probe measures single-stream throughput; with multiple SMB connections,
+    // aggregate can be higher.  But the measured value is a much better starting
+    // point than the NIC link speed on WAN paths.
+    double bw_for_bdp;
+    if (measured_bw_bytes_per_sec > 0 && measured_bw_bytes_per_sec < link_bytes_per_sec * 0.8) {
+        // Measured << link speed → WAN bottleneck.  Use measured throughput.
+        bw_for_bdp = measured_bw_bytes_per_sec;
+        result.measured_bw_bps = measured_bw_bytes_per_sec * 8.0;
+    } else {
+        // Measured close to link speed → LAN path, link speed is accurate
+        bw_for_bdp = link_bytes_per_sec;
+        result.measured_bw_bps = static_cast<double>(link_speed_bps);
+    }
+
+    result.bdp_bytes = bw_for_bdp * (result.rtt_ms / 1000.0);
+
+    // Suggest inflight: enough to fill the pipe.
     // Each inflight chunk = chunk_size bytes on the wire.
-    // CRITICAL: must use actual chunk_size, not DEFAULT_CHUNK_SIZE!
-    // With 1MB chunks on a 1Gbps/10ms link, BDP = 1.25 MB → need ~3 inflight.
-    // With 50MB default you'd get 0.025 → inflight would be 1. Completely wrong.
     uint32_t cs = chunk_size > 0 ? chunk_size : DEFAULT_CHUNK_SIZE;
     double chunks_to_fill = result.bdp_bytes / static_cast<double>(cs);
     result.suggested_inflight = static_cast<int>(chunks_to_fill * 2.0); // 2x overcommit

@@ -90,8 +90,9 @@ private:
 // Measures round-trip time to a remote path by timing a small I/O.
 
 struct RTTResult {
-    double rtt_ms;          // measured RTT in milliseconds
-    double bdp_bytes;       // bandwidth-delay product (link_speed * rtt)
+    double rtt_ms;              // measured RTT in milliseconds
+    double bdp_bytes;           // bandwidth-delay product (measured_bw * rtt)
+    double measured_bw_bps;     // actual path throughput measured via bulk read probe
     int    suggested_inflight;
     int    suggested_connections;
 };
