@@ -241,9 +241,19 @@ void print_progress(const TransferStats& stats) {
     if (stats.connections > 1 || stats.net_stats_active || writes_out > 0) {
         con_printf(L" Net:");
         if (stats.net_stats_active) {
-            con_printf(L" RTT %ums | CWND %u |", stats.net_rtt_ms, stats.net_cwnd);
+            con_printf(L" RTT %ums | ", stats.net_rtt_ms);
+
+            // Download-specific: Check for RWIN limit or OOO packets
+            if (stats.net_rwin_sent < 65535) {
+                con_printf(L"\x1b[93mSmall RWIN (%u KB)\x1b[0m |", stats.net_rwin_sent / 1024);
+            } else {
+                con_printf(L"RWIN %u KB |", stats.net_rwin_sent / 1024);
+            }
+
+            if (stats.net_out_of_order > 0)
+                con_printf(L" \x1b[91mOOO-Pkts %u\x1b[0m |", stats.net_out_of_order);
             
-            // Bottleneck logic
+            // Bottleneck logic for uploads (still useful for general limit detection)
             if (stats.net_lim_rwin_pct > 50) 
                 con_printf(L" \x1b[93mBottleneck: Receiver (RWIN %u%%)\x1b[0m |", stats.net_lim_rwin_pct);
             else if (stats.net_lim_cwnd_pct > 50)

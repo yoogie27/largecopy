@@ -27,26 +27,23 @@ static MIB_TCPROW to_row(const MIB_TCPROW2& r2) {
     return r;
 }
 
-// ── Enable path and congestion stats on a single connection ─────────────────
+// ── Enable path, congestion and receive stats on a single connection ─────────
 static bool enable_stats(MIB_TCPROW* row) {
     struct { BOOLEAN EnableCollection; } rw = { 2 }; // TcpBoolOptEnabled = 2
     
-    DWORD err1 = SetPerTcpConnectionEStats(
-        row, TcpConnectionEstatsPath,
-        reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
-        
-    DWORD err2 = SetPerTcpConnectionEStats(
-        row, TcpConnectionEstatsSendCong,
-        reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
-        
-    return (err1 == NO_ERROR && err2 == NO_ERROR);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsPath, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsSndCong, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsRec, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    
+    return true; // If one fails, we still try the others
 }
 
 // ── Disable stats on a single connection ────────────────────────────────────
 static void disable_stats(MIB_TCPROW* row) {
     struct { BOOLEAN EnableCollection; } rw = { 1 }; // TcpBoolOptDisabled = 1
     SetPerTcpConnectionEStats(row, TcpConnectionEstatsPath, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
-    SetPerTcpConnectionEStats(row, TcpConnectionEstatsSendCong, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsSndCong, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsRec, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -125,14 +122,13 @@ void netstats_sample(NetStats& out) {
             out.timeouts      += rod_path.Timeouts;
             out.dup_acks      += rod_path.DupAcksIn;
             out.cong_signals  += rod_path.CongSignals;
-            // RTT is per-connection, we take the average
-            out.rtt_ms += rod_path.SampleRtt;
+            out.rtt_ms        += rod_path.SampleRtt;
         }
 
         // 2. Congestion stats (CWND, limit timers)
-        TCP_ESTATS_SEND_CONG_ROD_v0 rod_cong = {};
+        TCP_ESTATS_SND_CONG_ROD_v0 rod_cong = {};
         err = GetPerTcpConnectionEStats(
-            &g_rows[i], TcpConnectionEstatsSendCong,
+            &g_rows[i], TcpConnectionEstatsSndCong,
             nullptr, 0, 0, nullptr, 0, 0,
             reinterpret_cast<PUCHAR>(&rod_cong), 0, sizeof(rod_cong));
 
@@ -142,11 +138,24 @@ void netstats_sample(NetStats& out) {
             out.lim_cwnd_ms    += rod_cong.SndLimTimeCwnd;
             out.lim_sender_ms  += rod_cong.SndLimTimeSnd;
         }
+
+        // 3. Receive stats (RWIN sent)
+        TCP_ESTATS_REC_ROD_v0 rod_rec = {};
+        err = GetPerTcpConnectionEStats(
+            &g_rows[i], TcpConnectionEstatsRec,
+            nullptr, 0, 0, nullptr, 0, 0,
+            reinterpret_cast<PUCHAR>(&rod_rec), 0, sizeof(rod_rec));
+
+        if (err == NO_ERROR) {
+            out.rwin_cur           += rod_rec.CurRwinSent;
+            out.rcv_win_scale      =  rod_rec.WinScaleSent; // scale is fixed per conn
+        }
     }
 
     if (g_row_count > 0) {
         out.rtt_ms /= g_row_count;
-        out.cwnd   /= g_row_count; // average CWND across connections
+        out.cwnd   /= g_row_count;
+        out.rwin_cur /= g_row_count;
     }
 }
 

@@ -15,9 +15,14 @@ struct NetStats {
     // New metrics for bottleneck analysis
     uint32_t rtt_ms;           // smoothed RTT in ms
     uint32_t cwnd;             // congestion window (segments)
+    uint32_t rwin_cur;         // current advertised receive window (bytes)
     uint64_t lim_rwin_ms;      // cumulative time limited by receive window
     uint64_t lim_cwnd_ms;      // cumulative time limited by congestion window
     uint64_t lim_sender_ms;    // cumulative time limited by sender (app/disk)
+    
+    // Download specific
+    uint32_t rcv_pkts_out_order; // segments received out of order (indicates loss/jitter)
+    uint32_t rcv_win_scale;      // window scale factor
 
     int      conn_count;       // number of tracked TCP connections
     bool     available;        // true if EStats are working

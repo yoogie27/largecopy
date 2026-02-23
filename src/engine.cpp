@@ -754,7 +754,11 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     }
 
     // ── TCP stats (network transfers only) ──
-    if (dst_remote && net_profile_.server_name[0]) {
+    bool src_remote = (hdr->source_path[0] == L'\\' && hdr->source_path[1] == L'\\');
+    // dst_remote already defined above
+    bool any_remote = src_remote || dst_remote;
+
+    if (any_remote && net_profile_.server_name[0]) {
         if (netstats_init(net_profile_.server_name)) {
             stats_.net_stats_active = true;
             NetStats ns = {};
@@ -901,6 +905,8 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
             stats_.net_timeouts      = ns.timeouts;
             stats_.net_rtt_ms        = ns.rtt_ms;
             stats_.net_cwnd          = ns.cwnd;
+            stats_.net_rwin_sent     = ns.rwin_cur << ns.rcv_win_scale;
+            stats_.net_out_of_order  = ns.rcv_pkts_out_order - prev_net_stats_.rcv_pkts_out_order;
 
             // Calculate percentage of time spent in each limit state during the last tick (250ms)
             uint64_t dr = ns.lim_rwin_ms - prev_net_stats_.lim_rwin_ms;
