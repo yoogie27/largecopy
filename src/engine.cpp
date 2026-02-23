@@ -69,6 +69,7 @@ void CopyEngine::on_hash_complete(ChunkContext* ctx, void* user_data) {
         }
 
         ctx->phase = ChunkPhase::Write;
+        engine->stats_.writes_outstanding.fetch_add(1, std::memory_order_relaxed);
         HANDLE dst = engine->dst_handle_;
         DWORD  write_len = ctx->aligned_length;
         BOOL   ok = FALSE;
@@ -159,6 +160,7 @@ void CopyEngine::on_hash_complete(ChunkContext* ctx, void* user_data) {
         }
 
         // Return buffer and update inflight
+        engine->stats_.writes_outstanding.fetch_sub(1, std::memory_order_relaxed);
         engine->buffer_pool_.release(ctx->buffer);
         InterlockedDecrement(&engine->inflight_count_);
         engine->stats_.current_inflight.store(engine->inflight_count_, std::memory_order_relaxed);
@@ -194,6 +196,7 @@ void CopyEngine::on_hash_complete(ChunkContext* ctx, void* user_data) {
         dst = engine->dst_handle_;
     }
 
+    engine->stats_.writes_outstanding.fetch_add(1, std::memory_order_relaxed);
     BOOL ok = WriteFile(dst, ctx->buffer, ctx->aligned_length,
                         nullptr, &ctx->overlapped);
     if (!ok && GetLastError() != ERROR_IO_PENDING) {
@@ -312,6 +315,8 @@ void CopyEngine::on_read_complete(ChunkContext* ctx, DWORD bytes_transferred) {
 
 // ── Handle completed write (async path only - sync writes handled in on_hash_complete)
 void CopyEngine::on_write_complete(ChunkContext* ctx, DWORD /*bytes_transferred*/) {
+    stats_.writes_outstanding.fetch_sub(1, std::memory_order_relaxed);
+
     // Release write throttle slot (async mode only)
     if (write_sem_ && !sync_writes_) {
         ReleaseSemaphore(write_sem_, 1, nullptr);
@@ -368,8 +373,11 @@ void CopyEngine::pump_reads() {
 void CopyEngine::on_io_error(ChunkContext* ctx, DWORD error_code) {
     // Release write throttle slot if this was an async write operation
     // (sync writes handle their own semaphore in on_hash_complete)
-    if (ctx->phase == ChunkPhase::Write && write_sem_ && !sync_writes_) {
-        ReleaseSemaphore(write_sem_, 1, nullptr);
+    if (ctx->phase == ChunkPhase::Write) {
+        stats_.writes_outstanding.fetch_sub(1, std::memory_order_relaxed);
+        if (write_sem_ && !sync_writes_) {
+            ReleaseSemaphore(write_sem_, 1, nullptr);
+        }
     }
 
     // Intentional cancellation (stall recovery) - silently re-queue, no retry
@@ -720,6 +728,16 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
         }
     }
 
+    // ── TCP stats (network transfers only) ──
+    if (dst_remote && net_profile_.server_name[0]) {
+        if (netstats_init(net_profile_.server_name)) {
+            stats_.net_stats_active = true;
+            NetStats ns = {};
+            netstats_sample(ns);
+            prev_net_stats_ = ns;
+        }
+    }
+
     // ── Create done event ──
     done_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     InitializeCriticalSection(&submit_cs_);
@@ -846,6 +864,15 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
             }
         }
 
+        // ── TCP stats sampling ────────────────────────────────────────────
+        if (stats_.net_stats_active) {
+            NetStats ns = {};
+            netstats_sample(ns);
+            stats_.net_retrans_delta = ns.retrans_pkts - prev_net_stats_.retrans_pkts;
+            stats_.net_timeouts      = ns.timeouts;
+            prev_net_stats_ = ns;
+        }
+
         // ── Stall detection & recovery (async writes only) ────────────────
         // Not needed for sync_writes_ mode - writes are blocking and self-limiting.
         if (!sync_writes_) {
@@ -958,6 +985,7 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     if (iocp_) { CloseHandle(iocp_); iocp_ = nullptr; }
     if (write_sem_) { CloseHandle(write_sem_); write_sem_ = nullptr; }
     if (done_event_) { CloseHandle(done_event_); done_event_ = nullptr; }
+    netstats_cleanup();
     DeleteCriticalSection(&submit_cs_);
     buffer_pool_.destroy();
 

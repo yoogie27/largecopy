@@ -234,7 +234,22 @@ void print_progress(const TransferStats& stats) {
         con_printf(L" | Inflight: %d | Conns: %d", inflight, stats.connections);
     con_printf(L"\n");
 
-    g_last_lines = 3;
+    int lines = 3;
+
+    // Network stats line (only for remote transfers)
+    int writes_out = stats.writes_outstanding.load(std::memory_order_relaxed);
+    if (stats.connections > 1 || stats.net_stats_active || writes_out > 0) {
+        con_printf(L" Net:");
+        if (stats.net_stats_active) {
+            con_printf(L" %u retrans | %u timeouts |",
+                       stats.net_retrans_delta, stats.net_timeouts);
+        }
+        con_printf(L" %d writes queued", writes_out);
+        con_printf(L"\n");
+        lines = 4;
+    }
+
+    g_last_lines = lines;
 }
 
 void print_summary(const TransferStats& stats) {

@@ -29,7 +29,7 @@ jobs:
           /Fo:build\
           src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
           src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
-          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
+          src\buffer_pool.cpp src\wan.cpp src\detect.cpp src\netstats.cpp
           /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
 
       - name: Smoke test
@@ -63,7 +63,7 @@ jobs:
           /Fo:build\
           src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp
           src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp
-          src\buffer_pool.cpp src\wan.cpp src\detect.cpp
+          src\buffer_pool.cpp src\wan.cpp src\detect.cpp src\netstats.cpp
           /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
 
   codeql:

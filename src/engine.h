@@ -9,6 +9,7 @@
 #include "smb.h"
 #include "wan.h"
 #include "detect.h"
+#include "netstats.h"
 
 class CopyEngine {
 public:
@@ -100,4 +101,7 @@ private:
 
     CRITICAL_SECTION   submit_cs_;
     volatile long      inflight_count_ = 0;
+
+    // TCP stats for network transfers
+    NetStats           prev_net_stats_ = {};
 };

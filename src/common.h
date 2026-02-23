@@ -135,6 +135,7 @@ struct TransferStats {
     std::atomic<uint32_t> chunks_skipped{0};   // sparse + delta skipped
     std::atomic<uint32_t> retry_count{0};
     std::atomic<int>      current_inflight{0}; // adaptive inflight gauge
+    std::atomic<int>      writes_outstanding{0}; // pending write ops in SMB pipeline
     uint64_t              bytes_skipped{0};    // bytes from sparse/delta (not transferred)
     std::atomic<bool>     finished{false};
     std::atomic<bool>     aborted{false};
@@ -142,6 +143,11 @@ struct TransferStats {
     uint64_t              total_bytes{0};
     uint32_t              total_chunks{0};
     int                   connections{1};
+
+    // TCP network stats (updated by main thread each tick)
+    uint32_t              net_retrans_delta{0}; // retransmits since last sample
+    uint32_t              net_timeouts{0};      // cumulative retransmit timeouts
+    bool                  net_stats_active{false}; // true if TCP EStats available
 };
 
 // ── IOCP Completion Keys ─────────────────────────────────────────────────────

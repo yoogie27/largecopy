@@ -26,7 +26,7 @@ cl.exe /nologo /std:c++20 /O2 /EHsc /W4 ^
     /Fo:build\ ^
     src\main.cpp src\args.cpp src\engine.cpp src\ledger.cpp ^
     src\hasher.cpp src\smb.cpp src\privilege.cpp src\console.cpp ^
-    src\buffer_pool.cpp src\wan.cpp src\detect.cpp ^
+    src\buffer_pool.cpp src\wan.cpp src\detect.cpp src\netstats.cpp ^
     /link /SUBSYSTEM:CONSOLE ws2_32.lib iphlpapi.lib advapi32.lib mpr.lib
 
 if errorlevel 1 (
