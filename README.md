@@ -213,9 +213,9 @@ largecopy is designed for zero data loss in hostile network environments:
 - Adaptive controller reduces pipeline depth to prevent overwhelming the target
 
 **Ctrl+C (graceful shutdown):**
-- First Ctrl+C: cancels pending I/O, flushes the ledger, shows accurate summary of what was transferred
-- Second Ctrl+C: force exit
-- Ledger is always consistent — just run the copy command again to resume
+- First Ctrl+C: **Fast-Abort**. Cancels pending I/O, shows accurate summary of what was transferred, and exits immediately.
+- Second Ctrl+C: Force exit (hard kill).
+- Ledger is always consistent — just run the copy command again to resume. Memory-mapping ensures state changes survive a fast exit.
 
 **Hard kill / power failure:**
 - The ledger is memory-mapped. Any chunk not atomically marked as `Verified` will be re-transferred on resume
@@ -392,6 +392,8 @@ Shows the auto-detected environment, auto-configured settings, and exits without
 | `--compress` | off | Request SMB compression (auto-enabled on Win11+). |
 | `--verify-after` | off | Full verification pass after copy completes. |
 | `--force` | off | Overwrite existing destination, ignoring any ledger. |
+| `--ssd` | off | Treat destination as SSD/NVMe (force async, skip HDD throttles). |
+| `--safe-net` | off | Force synchronous writes for network destinations (slower, safer). |
 | `--wan` | auto | WAN mode. Auto-enabled for network destinations. |
 | `--adaptive` | auto | Auto-tune inflight depth in real-time. |
 | `--sparse` | auto | Skip zero-filled regions in sparse files. |
@@ -477,9 +479,11 @@ all_done() = all chunks Verified/Sparse/DeltaMatch
 
 ### Key design decisions
 
-**Sync writes for non-Windows SMB servers:** macOS smbd and Samba struggle with async overlapped writes from multiple threads. largecopy detects non-NTFS/ReFS network destinations and switches to synchronous writes from hash threads, gated by a semaphore. This prevents overwhelming the server while maintaining read/hash pipelining.
+**Sync writes for non-Windows SMB servers:** Some macOS smbd and Samba versions struggle with async overlapped writes from multiple threads. largecopy defaults to the fastest async path, but you can use `--safe-net` to switch to synchronous writes from hash threads, gated by a semaphore. This prevents overwhelming the server while maintaining read/hash pipelining.
 
-**Adaptive inflight (AIMD):** For network transfers, the pipeline depth is adjusted in real-time. Throughput increases → ramp up 25%. Throughput drops → back off 12.5%. This converges to optimal depth automatically without manual tuning.
+**Adaptive inflight (AIMD):** For network transfers, the pipeline depth is adjusted in real-time. Throughput increases → ramp up 20%. Throughput drops → back off 10%. The controller uses a 3-second observation window and smoothed AIMD to handle WAN jitter without performance collapse.
+
+**SSD/NVMe Overrides:** If the storage detection engine identifies a disk as HDD (common in VMs), use `--ssd` to force SSD-optimized defaults and bypass the 4-chunk HDD pipeline limit. This also forces high-performance unbuffered I/O on network paths.
 
 **Local ledger for remote destinations:** Memory-mapping a file over SMB causes background flushes that interfere with data writes. The ledger is stored in `%TEMP%\largecopy\` (keyed by a hash of the destination path) for network targets.
 
