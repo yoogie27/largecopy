@@ -24,6 +24,10 @@ struct NetStats {
     uint32_t rcv_pkts_out_order; // segments received out of order (indicates loss/jitter)
     uint32_t rcv_win_scale;      // window scale factor
 
+    // MSS detection (VPN clamping indicator)
+    uint32_t mss_min;            // minimum MSS across connections (0 = not available)
+    uint32_t mss_max;            // maximum MSS across connections
+
     int      conn_count;       // number of tracked TCP connections
     bool     available;        // true if EStats are working
 };

@@ -16,8 +16,8 @@ public:
     // Start the hash thread pool with `thread_count` threads.
     bool start(int thread_count, HashCompleteCallback callback, void* user_data);
 
-    // Enqueue a chunk for hashing.
-    void enqueue(ChunkContext* ctx);
+    // Enqueue a chunk for hashing. Returns false on allocation failure.
+    bool enqueue(ChunkContext* ctx);
 
     // Signal all threads to stop and wait for them to finish.
     void stop();

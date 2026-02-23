@@ -41,14 +41,15 @@ bool HashPool::start(int thread_count, HashCompleteCallback callback, void* user
     return true;
 }
 
-void HashPool::enqueue(ChunkContext* ctx) {
+bool HashPool::enqueue(ChunkContext* ctx) {
     auto* node = static_cast<QueueNode*>(
         _aligned_malloc(sizeof(QueueNode), MEMORY_ALLOCATION_ALIGNMENT));
-    if (!node) return;
+    if (!node) return false;
 
     node->ctx = ctx;
     InterlockedPushEntrySList(&queue_, &node->entry);
     ReleaseSemaphore(wake_event_, 1, nullptr);
+    return true;
 }
 
 void HashPool::stop() {

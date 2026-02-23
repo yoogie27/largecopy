@@ -350,6 +350,19 @@ void print_summary(const TransferStats& stats) {
                 con_printf(L"App/Disk %u%%", pct_sender);
             con_printf(L"\n");
         }
+
+        // MSS detection — warn if VPN/tunnel clamping detected
+        if (stats.net_mss_min > 0) {
+            con_printf(L"  MSS: %u bytes", stats.net_mss_min);
+            if (stats.net_mss_max != stats.net_mss_min)
+                con_printf(L" (range %u-%u)", stats.net_mss_min, stats.net_mss_max);
+            if (stats.net_mss_min < 1400) {
+                con_printf(L" \x1b[93m<-- VPN/tunnel detected (clamped from 1460)\x1b[0m");
+                uint32_t overhead_pct = ((1460 - stats.net_mss_min) * 100) / 1460;
+                con_printf(L"\n  VPN overhead: ~%u%% per segment — consider adjusting tunnel MTU", overhead_pct);
+            }
+            con_printf(L"\n");
+        }
     }
 }
 

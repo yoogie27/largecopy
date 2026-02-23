@@ -215,12 +215,18 @@ bool CopyEngine::submit_read(uint32_t chunk_index) {
     if (!rec) return false;
 
     uint8_t* buf = buffer_pool_.try_acquire();
-    if (!buf) return false;
+    if (!buf) {
+        // Chunk was claimed by find_next_pending (Pending→Reading).
+        // Restore it so it can be picked up on the next pump_reads() call.
+        ledger_->mark_state(chunk_index, ChunkState::Pending);
+        return false;
+    }
 
     auto* ctx = static_cast<ChunkContext*>(
         HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ChunkContext)));
     if (!ctx) {
         buffer_pool_.release(buf);
+        ledger_->mark_state(chunk_index, ChunkState::Pending);
         return false;
     }
 
@@ -314,7 +320,16 @@ void CopyEngine::on_read_complete(ChunkContext* ctx, DWORD bytes_transferred) {
         // because the callback blocks on synchronous writes - must not block
         // IOCP threads which handle read completions.
         ctx->phase = ChunkPhase::Hash;
-        hash_pool_.enqueue(ctx);
+        if (!hash_pool_.enqueue(ctx)) {
+            // Allocation failed — restore chunk so it can be retried
+            ledger_->mark_state(ctx->chunk_index, ChunkState::Pending);
+            buffer_pool_.release(ctx->buffer);
+            InterlockedDecrement(&inflight_count_);
+            stats_.current_inflight.store(inflight_count_, std::memory_order_relaxed);
+            HeapFree(GetProcessHeap(), 0, ctx);
+            pump_reads();
+            return;
+        }
     }
 }
 
@@ -944,6 +959,21 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
             stats_.net_sample_count++;
             stats_.net_rtt_sum += ns.rtt_ms;
 
+            // Track MSS (keep min/max across all samples)
+            if (ns.mss_min > 0) {
+                bool first_mss = (stats_.net_mss_min == 0);
+                if (first_mss || ns.mss_min < stats_.net_mss_min)
+                    stats_.net_mss_min = ns.mss_min;
+                if (ns.mss_max > stats_.net_mss_max)
+                    stats_.net_mss_max = ns.mss_max;
+
+                // One-time verbose warning for VPN/tunnel clamping
+                if (first_mss && ns.mss_min < 1400) {
+                    console_queue_msg(L"  \x1b[93mMSS: %u bytes (VPN/tunnel clamping detected, normal=1460)\x1b[0m",
+                                      ns.mss_min);
+                }
+            }
+
             // Verbose: emit a line when bottleneck type changes
             if (cfg_->verbose) {
                 int cur_bottleneck = 0;
@@ -1245,15 +1275,17 @@ int CopyEngine::run_copy(const Config& cfg) {
                 lc_log(L"RTT:     %.1f ms | BDP: %s | Path: %s", rtt.rtt_ms, bdp_buf, bw_buf);
             }
 
-            // Apply RTT-based suggestions: lower if measured path is slower than
-            // what auto_configure assumed, raise if BDP demands more.
-            if (rtt.suggested_inflight != tuned.inflight) {
+            // Apply RTT-based suggestions — but only when the user didn't
+            // explicitly set the value via CLI.  User overrides are sacred.
+            if (!cfg.inflight_user_set && rtt.suggested_inflight != tuned.inflight) {
                 tuned.inflight = rtt.suggested_inflight;
             }
-            if (rtt.suggested_connections < tuned.connections) {
-                tuned.connections = rtt.suggested_connections;
-            } else if (rtt.suggested_connections > tuned.connections) {
-                tuned.connections = rtt.suggested_connections;
+            if (!cfg.connections_user_set) {
+                if (rtt.suggested_connections < tuned.connections) {
+                    tuned.connections = rtt.suggested_connections;
+                } else if (rtt.suggested_connections > tuned.connections) {
+                    tuned.connections = rtt.suggested_connections;
+                }
             }
         }
     }
@@ -1454,12 +1486,14 @@ int CopyEngine::run_resume(const Config& cfg) {
             format_rate(rtt.measured_bw_bps / 8.0, bw_buf, 64);
             lc_log(L"RTT: %.1f ms | BDP: %s | Path: %s", rtt.rtt_ms, bdp_buf, bw_buf);
         }
-        if (rtt.suggested_inflight != tuned.inflight)
+        if (!cfg.inflight_user_set && rtt.suggested_inflight != tuned.inflight)
             tuned.inflight = rtt.suggested_inflight;
-        if (rtt.suggested_connections < tuned.connections)
-            tuned.connections = rtt.suggested_connections;
-        else if (rtt.suggested_connections > tuned.connections)
-            tuned.connections = rtt.suggested_connections;
+        if (!cfg.connections_user_set) {
+            if (rtt.suggested_connections < tuned.connections)
+                tuned.connections = rtt.suggested_connections;
+            else if (rtt.suggested_connections > tuned.connections)
+                tuned.connections = rtt.suggested_connections;
+        }
     }
 
     return execute_transfer(tuned, ledger);

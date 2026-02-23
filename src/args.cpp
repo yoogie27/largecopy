@@ -143,6 +143,7 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
         else if (wcscmp(arg, L"--inflight") == 0) {
             if (++i >= argc) { lc_error(L"--inflight requires a value"); return false; }
             if (!parse_int(argv[i], cfg.inflight)) { lc_error(L"Invalid inflight count: %s", argv[i]); return false; }
+            cfg.inflight_user_set = true;
         }
         else if (wcscmp(arg, L"--retries") == 0) {
             if (++i >= argc) { lc_error(L"--retries requires a value"); return false; }
@@ -170,6 +171,7 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
                 lc_error(L"Max connections is %d", MAX_CONNECTIONS);
                 return false;
             }
+            cfg.connections_user_set = true;
         }
         else if (wcscmp(arg, L"-h") == 0 || wcscmp(arg, L"--help") == 0) {
             cfg.command = Command::Help;

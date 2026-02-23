@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.12";
+static constexpr const wchar_t* LC_VERSION = L"3.0.13";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -120,6 +120,8 @@ struct Config {
     bool     wan_mode      = false;     // enable WAN optimizations
     bool     adaptive      = false;     // adaptive inflight tuning
     bool     adaptive_user_set = false; // user explicitly passed --adaptive or --no-adaptive
+    bool     inflight_user_set = false; // user explicitly passed --inflight
+    bool     connections_user_set = false; // user explicitly passed --connections
     int      adaptive_max  = WAN_MAX_INFLIGHT; // ceiling for adaptive controller
     int      max_writes    = 0;         // max outstanding writes (0 = unlimited)
     bool     sparse        = false;     // sparse-aware: skip zero regions
@@ -170,6 +172,8 @@ struct TransferStats {
     uint32_t              net_conn_count{0};           // tracked TCP connections
     uint32_t              net_sample_count{0};         // number of samples taken
     uint32_t              net_rtt_sum{0};              // sum of RTT samples (for average)
+    uint32_t              net_mss_min{0};              // minimum MSS observed (VPN indicator)
+    uint32_t              net_mss_max{0};              // maximum MSS observed
 };
 
 // ── IOCP Completion Keys ─────────────────────────────────────────────────────

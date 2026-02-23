@@ -152,6 +152,14 @@ void netstats_sample(NetStats& out) {
             out.dup_acks      += rod_path.DupAcksIn;
             out.cong_signals  += rod_path.CongSignals;
             out.rtt_ms        += rod_path.SampleRtt;
+
+            // MSS detection (CurMss is the current maximum segment size)
+            if (rod_path.CurMss > 0) {
+                if (out.mss_min == 0 || rod_path.CurMss < out.mss_min)
+                    out.mss_min = rod_path.CurMss;
+                if (rod_path.CurMss > out.mss_max)
+                    out.mss_max = rod_path.CurMss;
+            }
         }
 
         // 2. Congestion stats (CWND, limit timers)
