@@ -926,17 +926,28 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
             NetStats ns = {};
             netstats_sample(ns);
 
-            stats_.net_retrans_delta = ns.retrans_pkts - prev_net_stats_.retrans_pkts;
-            stats_.net_timeouts      = ns.timeouts;
             stats_.net_rtt_ms        = ns.rtt_ms;
             stats_.net_cwnd          = ns.cwnd;
             stats_.net_rwin_sent     = ns.rwin_cur << ns.rcv_win_scale;
-            stats_.net_out_of_order  = ns.rcv_pkts_out_order - prev_net_stats_.rcv_pkts_out_order;
+            stats_.net_timeouts      = ns.timeouts;
 
-            // Per-tick bottleneck percentages
-            uint64_t dr = ns.lim_rwin_ms - prev_net_stats_.lim_rwin_ms;
-            uint64_t dc = ns.lim_cwnd_ms - prev_net_stats_.lim_cwnd_ms;
-            uint64_t ds = ns.lim_sender_ms - prev_net_stats_.lim_sender_ms;
+            // Safe deltas: if reporting count changed (connection closed/opened),
+            // cumulative sums can decrease → skip this tick to avoid underflow.
+            bool conns_stable = (ns.reporting_count == prev_net_stats_.reporting_count
+                                 && prev_net_stats_.reporting_count > 0);
+
+            stats_.net_retrans_delta = conns_stable && ns.retrans_pkts >= prev_net_stats_.retrans_pkts
+                ? ns.retrans_pkts - prev_net_stats_.retrans_pkts : 0;
+            stats_.net_out_of_order  = conns_stable && ns.rcv_pkts_out_order >= prev_net_stats_.rcv_pkts_out_order
+                ? ns.rcv_pkts_out_order - prev_net_stats_.rcv_pkts_out_order : 0;
+
+            // Per-tick bottleneck percentages (safe subtraction)
+            uint64_t dr = (conns_stable && ns.lim_rwin_ms >= prev_net_stats_.lim_rwin_ms)
+                ? ns.lim_rwin_ms - prev_net_stats_.lim_rwin_ms : 0;
+            uint64_t dc = (conns_stable && ns.lim_cwnd_ms >= prev_net_stats_.lim_cwnd_ms)
+                ? ns.lim_cwnd_ms - prev_net_stats_.lim_cwnd_ms : 0;
+            uint64_t ds = (conns_stable && ns.lim_sender_ms >= prev_net_stats_.lim_sender_ms)
+                ? ns.lim_sender_ms - prev_net_stats_.lim_sender_ms : 0;
             uint64_t total_lim = dr + dc + ds;
 
             if (total_lim > 0) {
@@ -953,9 +964,13 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
             stats_.net_total_lim_rwin_ms   += dr;
             stats_.net_total_lim_cwnd_ms   += dc;
             stats_.net_total_lim_sender_ms += ds;
-            stats_.net_total_retrans       = ns.retrans_pkts;
-            stats_.net_total_out_of_order  = ns.rcv_pkts_out_order;
-            stats_.net_conn_count          = ns.conn_count;
+            // Use high-water mark: if connections drop, cumulative totals can
+            // decrease — keep the highest value seen so far.
+            if (ns.retrans_pkts > stats_.net_total_retrans)
+                stats_.net_total_retrans = ns.retrans_pkts;
+            if (ns.rcv_pkts_out_order > stats_.net_total_out_of_order)
+                stats_.net_total_out_of_order = ns.rcv_pkts_out_order;
+            stats_.net_conn_count          = ns.reporting_count;
             stats_.net_sample_count++;
             stats_.net_rtt_sum += ns.rtt_ms;
 

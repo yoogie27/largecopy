@@ -29,6 +29,7 @@ struct NetStats {
     uint32_t mss_max;            // maximum MSS across connections
 
     int      conn_count;       // number of tracked TCP connections
+    int      reporting_count;  // connections that returned valid data this sample
     bool     available;        // true if EStats are working
 };
 

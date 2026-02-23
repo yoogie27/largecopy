@@ -137,6 +137,8 @@ void netstats_sample(NetStats& out) {
 
     if (!g_available || g_row_count == 0) return;
 
+    int path_ok = 0, cong_ok = 0, rec_ok = 0;
+
     for (int i = 0; i < g_row_count; i++) {
         // 1. Path stats (RTT, retrans, timeouts)
         TCP_ESTATS_PATH_ROD_v0 rod_path = {};
@@ -146,15 +148,18 @@ void netstats_sample(NetStats& out) {
             reinterpret_cast<PUCHAR>(&rod_path), 0, sizeof(rod_path));
 
         if (err == NO_ERROR) {
+            path_ok++;
             out.retrans_pkts  += rod_path.PktsRetrans;
             out.retrans_bytes += rod_path.BytesRetrans;
             out.timeouts      += rod_path.Timeouts;
             out.dup_acks      += rod_path.DupAcksIn;
             out.cong_signals  += rod_path.CongSignals;
-            out.rtt_ms        += rod_path.SampleRtt;
+            out.rtt_ms        += rod_path.SmoothedRtt; // SmoothedRtt, not SampleRtt
 
             // MSS detection (CurMss is the current maximum segment size)
-            if (rod_path.CurMss > 0) {
+            // Sanity: RFC 879 minimum is 536; reject < 200 as stale/garbage
+            // and > 9200 (beyond jumbo frames) as implausible.
+            if (rod_path.CurMss >= 200 && rod_path.CurMss <= 9200) {
                 if (out.mss_min == 0 || rod_path.CurMss < out.mss_min)
                     out.mss_min = rod_path.CurMss;
                 if (rod_path.CurMss > out.mss_max)
@@ -170,6 +175,7 @@ void netstats_sample(NetStats& out) {
             reinterpret_cast<PUCHAR>(&rod_cong), 0, sizeof(rod_cong));
 
         if (err == NO_ERROR) {
+            cong_ok++;
             out.cwnd           += rod_cong.CurCwnd;
             out.lim_rwin_ms    += rod_cong.SndLimTimeRwin;
             out.lim_cwnd_ms    += rod_cong.SndLimTimeCwnd;
@@ -184,16 +190,18 @@ void netstats_sample(NetStats& out) {
             reinterpret_cast<PUCHAR>(&rod_rec), 0, sizeof(rod_rec));
 
         if (err == NO_ERROR) {
+            rec_ok++;
             out.rwin_cur           += rod_rec.CurRwinSent;
-            out.rcv_win_scale      =  rod_rec.WinScaleSent; // scale is fixed per conn
+            out.rcv_win_scale      =  rod_rec.WinScaleSent;
         }
     }
 
-    if (g_row_count > 0) {
-        out.rtt_ms /= g_row_count;
-        out.cwnd   /= g_row_count;
-        out.rwin_cur /= g_row_count;
-    }
+    // Average point-in-time metrics by actual reporting count (not g_row_count)
+    if (path_ok > 0) out.rtt_ms   /= path_ok;
+    if (cong_ok > 0) out.cwnd     /= cong_ok;
+    if (rec_ok  > 0) out.rwin_cur /= rec_ok;
+
+    out.reporting_count = path_ok > cong_ok ? path_ok : cong_ok;
 }
 
 void netstats_cleanup() {
