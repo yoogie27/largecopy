@@ -236,35 +236,19 @@ void print_progress(const TransferStats& stats) {
 
     int lines = 3;
 
-    // Network stats line (only for remote transfers)
+    // Network stats line — compact (detailed bottleneck analysis goes to verbose + summary)
     int writes_out = stats.writes_outstanding.load(std::memory_order_relaxed);
     if (stats.connections > 1 || stats.net_stats_active || writes_out > 0) {
         con_printf(L" Net:");
         if (stats.net_stats_active) {
-            con_printf(L" RTT %ums | ", stats.net_rtt_ms);
-
-            // Download-specific: Check for RWIN limit or OOO packets
-            if (stats.net_rwin_sent < 65535) {
-                con_printf(L"\x1b[93mSmall RWIN (%u KB)\x1b[0m |", stats.net_rwin_sent / 1024);
-            } else {
-                con_printf(L"RWIN %u KB |", stats.net_rwin_sent / 1024);
-            }
-
-            if (stats.net_out_of_order > 0)
-                con_printf(L" \x1b[91mOOO-Pkts %u\x1b[0m |", stats.net_out_of_order);
-            
-            // Bottleneck logic for uploads (still useful for general limit detection)
-            if (stats.net_lim_rwin_pct > 50) 
-                con_printf(L" \x1b[93mBottleneck: Receiver (RWIN %u%%)\x1b[0m |", stats.net_lim_rwin_pct);
-            else if (stats.net_lim_cwnd_pct > 50)
-                con_printf(L" \x1b[91mBottleneck: Network (CWND %u%%)\x1b[0m |", stats.net_lim_cwnd_pct);
-            else if (stats.net_lim_sender_pct > 50)
-                con_printf(L" \x1b[96mBottleneck: App/Disk (SND %u%%)\x1b[0m |", stats.net_lim_sender_pct);
-
+            con_printf(L" RTT %ums", stats.net_rtt_ms);
             if (stats.net_retrans_delta > 0)
-                con_printf(L" \x1b[91m%u retrans\x1b[0m |", stats.net_retrans_delta);
+                con_printf(L" | \x1b[91m%u retrans\x1b[0m", stats.net_retrans_delta);
+            con_printf(L" |");
         }
         con_printf(L" %d writes queued", writes_out);
+        if (inflight > 0)
+            con_printf(L" | inflight %d", inflight);
         con_printf(L"\n");
         lines = 4;
     }
@@ -326,6 +310,46 @@ void print_summary(const TransferStats& stats) {
         con_printf(L"\x1b[92m%u chunks verified\x1b[0m | \x1b[91m%u chunks FAILED\x1b[0m\n",
                    verified, failed);
         con_printf(L"Run \x1b[97mlargecopy resume\x1b[0m to retry failed chunks\n");
+    }
+
+    // TCP network summary (if EStats were active)
+    if (stats.net_stats_active && stats.net_sample_count > 0) {
+        uint64_t total_lim = stats.net_total_lim_rwin_ms + stats.net_total_lim_cwnd_ms
+                             + stats.net_total_lim_sender_ms;
+        con_printf(L"\n\x1b[96mTCP analysis\x1b[0m (%u connections, %u samples)\n",
+                   stats.net_conn_count, stats.net_sample_count);
+
+        uint32_t avg_rtt = stats.net_rtt_sum / stats.net_sample_count;
+        con_printf(L"  Avg RTT: %u ms", avg_rtt);
+        if (stats.net_total_retrans > 0)
+            con_printf(L" | \x1b[91mRetransmits: %u\x1b[0m", stats.net_total_retrans);
+        if (stats.net_total_out_of_order > 0)
+            con_printf(L" | \x1b[93mOut-of-order: %u\x1b[0m", stats.net_total_out_of_order);
+        con_printf(L"\n");
+
+        if (total_lim > 0) {
+            uint32_t pct_rwin   = static_cast<uint32_t>((stats.net_total_lim_rwin_ms * 100) / total_lim);
+            uint32_t pct_cwnd   = static_cast<uint32_t>((stats.net_total_lim_cwnd_ms * 100) / total_lim);
+            uint32_t pct_sender = static_cast<uint32_t>((stats.net_total_lim_sender_ms * 100) / total_lim);
+
+            con_printf(L"  Bottleneck: ");
+            // Highlight the dominant one
+            if (pct_rwin >= pct_cwnd && pct_rwin >= pct_sender)
+                con_printf(L"\x1b[93mRWIN %u%%\x1b[0m", pct_rwin);
+            else
+                con_printf(L"RWIN %u%%", pct_rwin);
+            con_printf(L" | ");
+            if (pct_cwnd >= pct_rwin && pct_cwnd >= pct_sender)
+                con_printf(L"\x1b[91mCWND %u%%\x1b[0m", pct_cwnd);
+            else
+                con_printf(L"CWND %u%%", pct_cwnd);
+            con_printf(L" | ");
+            if (pct_sender >= pct_rwin && pct_sender >= pct_cwnd)
+                con_printf(L"\x1b[96mApp/Disk %u%%\x1b[0m", pct_sender);
+            else
+                con_printf(L"App/Disk %u%%", pct_sender);
+            con_printf(L"\n");
+        }
     }
 }
 

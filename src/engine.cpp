@@ -910,7 +910,7 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
         if (stats_.net_stats_active) {
             NetStats ns = {};
             netstats_sample(ns);
-            
+
             stats_.net_retrans_delta = ns.retrans_pkts - prev_net_stats_.retrans_pkts;
             stats_.net_timeouts      = ns.timeouts;
             stats_.net_rtt_ms        = ns.rtt_ms;
@@ -918,7 +918,7 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
             stats_.net_rwin_sent     = ns.rwin_cur << ns.rcv_win_scale;
             stats_.net_out_of_order  = ns.rcv_pkts_out_order - prev_net_stats_.rcv_pkts_out_order;
 
-            // Calculate percentage of time spent in each limit state during the last tick (250ms)
+            // Per-tick bottleneck percentages
             uint64_t dr = ns.lim_rwin_ms - prev_net_stats_.lim_rwin_ms;
             uint64_t dc = ns.lim_cwnd_ms - prev_net_stats_.lim_cwnd_ms;
             uint64_t ds = ns.lim_sender_ms - prev_net_stats_.lim_sender_ms;
@@ -932,6 +932,54 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
                 stats_.net_lim_rwin_pct   = 0;
                 stats_.net_lim_cwnd_pct   = 0;
                 stats_.net_lim_sender_pct = 0;
+            }
+
+            // Accumulate cumulative totals for final summary
+            stats_.net_total_lim_rwin_ms   += dr;
+            stats_.net_total_lim_cwnd_ms   += dc;
+            stats_.net_total_lim_sender_ms += ds;
+            stats_.net_total_retrans       = ns.retrans_pkts;
+            stats_.net_total_out_of_order  = ns.rcv_pkts_out_order;
+            stats_.net_conn_count          = ns.conn_count;
+            stats_.net_sample_count++;
+            stats_.net_rtt_sum += ns.rtt_ms;
+
+            // Verbose: emit a line when bottleneck type changes
+            if (cfg_->verbose) {
+                int cur_bottleneck = 0;
+                if (total_lim > 0) {
+                    if (stats_.net_lim_rwin_pct > 50)        cur_bottleneck = 1;
+                    else if (stats_.net_lim_cwnd_pct > 50)   cur_bottleneck = 2;
+                    else if (stats_.net_lim_sender_pct > 50)  cur_bottleneck = 3;
+                }
+                if (cur_bottleneck != prev_bottleneck_) {
+                    switch (cur_bottleneck) {
+                    case 1:
+                        console_queue_msg(L"  \x1b[93mTCP bottleneck: Receiver RWIN (%u%%)\x1b[0m  RTT %ums  RWIN %u KB",
+                                          stats_.net_lim_rwin_pct, ns.rtt_ms, stats_.net_rwin_sent / 1024);
+                        break;
+                    case 2:
+                        console_queue_msg(L"  \x1b[91mTCP bottleneck: Network CWND (%u%%)\x1b[0m  RTT %ums  CWND %u",
+                                          stats_.net_lim_cwnd_pct, ns.rtt_ms, ns.cwnd);
+                        break;
+                    case 3:
+                        console_queue_msg(L"  \x1b[96mTCP bottleneck: App/Disk (%u%%)\x1b[0m  RTT %ums",
+                                          stats_.net_lim_sender_pct, ns.rtt_ms);
+                        break;
+                    default:
+                        break;
+                    }
+                    prev_bottleneck_ = cur_bottleneck;
+                }
+
+                if (stats_.net_retrans_delta > 0) {
+                    console_queue_msg(L"  \x1b[91mTCP retransmits: %u pkts\x1b[0m",
+                                      stats_.net_retrans_delta);
+                }
+                if (stats_.net_out_of_order > 0) {
+                    console_queue_msg(L"  \x1b[93mTCP out-of-order: %u pkts\x1b[0m",
+                                      stats_.net_out_of_order);
+                }
             }
 
             prev_net_stats_ = ns;

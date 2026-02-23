@@ -104,4 +104,5 @@ private:
 
     // TCP stats for network transfers
     NetStats           prev_net_stats_ = {};
+    int                prev_bottleneck_ = 0;  // 0=none, 1=rwin, 2=cwnd, 3=sender
 };

@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.11";
+static constexpr const wchar_t* LC_VERSION = L"3.0.12";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -149,17 +149,27 @@ struct TransferStats {
     uint32_t              total_chunks{0};
     int                   connections{1};
 
-    // TCP network stats (updated by main thread each tick)
+    // TCP network stats — per-tick snapshot (updated by main thread each tick)
     uint32_t              net_retrans_delta{0}; // retransmits since last sample
     uint32_t              net_timeouts{0};      // cumulative retransmit timeouts
     uint32_t              net_rtt_ms{0};
     uint32_t              net_cwnd{0};
     uint32_t              net_rwin_sent{0};
     uint32_t              net_out_of_order{0};
-    uint32_t              net_lim_rwin_pct{0};  // % of time limited by Rwin
-    uint32_t              net_lim_cwnd_pct{0};  // % of time limited by Cwnd
-    uint32_t              net_lim_sender_pct{0};// % of time limited by Sender
-    bool                  net_stats_active{false}; // true if TCP EStats available
+    uint32_t              net_lim_rwin_pct{0};  // % of time limited by Rwin (this tick)
+    uint32_t              net_lim_cwnd_pct{0};  // % of time limited by Cwnd (this tick)
+    uint32_t              net_lim_sender_pct{0};// % of time limited by Sender (this tick)
+    bool                  net_stats_active{false}; // true if TCP EStats are available
+
+    // TCP network stats — cumulative totals for final summary
+    uint64_t              net_total_lim_rwin_ms{0};   // total ms limited by RWIN
+    uint64_t              net_total_lim_cwnd_ms{0};   // total ms limited by CWND
+    uint64_t              net_total_lim_sender_ms{0};  // total ms limited by Sender
+    uint32_t              net_total_retrans{0};        // total retransmitted packets
+    uint32_t              net_total_out_of_order{0};   // total OOO segments
+    uint32_t              net_conn_count{0};           // tracked TCP connections
+    uint32_t              net_sample_count{0};         // number of samples taken
+    uint32_t              net_rtt_sum{0};              // sum of RTT samples (for average)
 };
 
 // ── IOCP Completion Keys ─────────────────────────────────────────────────────
