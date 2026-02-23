@@ -201,6 +201,11 @@ void CopyEngine::on_hash_complete(ChunkContext* ctx, void* user_data) {
                         nullptr, &ctx->overlapped);
     if (!ok && GetLastError() != ERROR_IO_PENDING) {
         engine->on_io_error(ctx, GetLastError());
+    } else {
+        // Pipeline optimization: try to submit more reads now rather than
+        // waiting for the write to complete.  Safe because pump_reads()
+        // checks inflight < target and uses try_acquire (non-blocking).
+        engine->pump_reads();
     }
 }
 
@@ -528,7 +533,7 @@ bool CopyEngine::reopen_handles() {
         CloseHandle(src_handle_);
         Sleep(1000);
         DWORD rflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
-        if (!cfg_->buffered) rflags |= FILE_FLAG_NO_BUFFERING;
+        if (!cfg_->buffered && !env_.source.is_remote) rflags |= FILE_FLAG_NO_BUFFERING;
         src_handle_ = CreateFileW(
             cfg_->source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
             nullptr, OPEN_EXISTING,
@@ -660,14 +665,20 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     }
 
     // ── Open source handles (always async via IOCP for fast reads) ──
+    // For remote sources: use buffered I/O so the SMB redirector can do
+    // sequential read-ahead.  NO_BUFFERING on SMB reads bypasses the
+    // client-side cache, killing prefetch and causing pipeline stalls.
+    bool src_remote = env_.source.is_remote;
+    bool src_buffered = cfg.buffered || src_remote;
+
     if (conn_count > 1) {
-        if (!src_pool_.open_read(hdr->source_path, conn_count, iocp_, IOCP_KEY_READ, cfg.buffered)) {
+        if (!src_pool_.open_read(hdr->source_path, conn_count, iocp_, IOCP_KEY_READ, src_buffered)) {
             lc_error(L"Failed to open source connection pool");
             return 1;
         }
     } else {
         DWORD rflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
-        if (!cfg.buffered) rflags |= FILE_FLAG_NO_BUFFERING;
+        if (!src_buffered) rflags |= FILE_FLAG_NO_BUFFERING;
         
         src_handle_ = CreateFileW(
             hdr->source_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -754,8 +765,7 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     }
 
     // ── TCP stats (network transfers only) ──
-    bool src_remote = (hdr->source_path[0] == L'\\' && hdr->source_path[1] == L'\\');
-    // dst_remote already defined above
+    // src_remote and dst_remote already defined above
     bool any_remote = src_remote || dst_remote;
 
     if (any_remote && net_profile_.server_name[0]) {

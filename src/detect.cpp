@@ -503,13 +503,10 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
 
     // Write throttle: hard cap on outstanding write operations.
     // This is the PRIMARY defense against overwhelming SMB servers.
-    // Unlike the adaptive controller (which controls total inflight including
-    // reads+hashes), this directly limits writes - the actual bottleneck.
-    // Since reads from NVMe complete ~1000x faster than writes over WiFi,
-    // all inflight slots quickly become outstanding writes. Without this
-    // throttle, non-Windows SMB servers (macOS smbd, Samba) permanently
-    // lock up when they see too many concurrent writes per session.
-    {
+    // Only needed when the DESTINATION is remote — local writes (SSD/NVMe)
+    // are fast enough that throttling just adds unnecessary contention.
+    // For downloads (remote source → local dest), skip the throttle entirely.
+    if (dst_remote) {
         int writes_per_conn = 6;  // Ethernet: 6 outstanding writes per connection
         switch (env.network.link_type) {
             case LinkType::WiFi:     writes_per_conn = 2; break;  // very sensitive

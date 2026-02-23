@@ -245,8 +245,9 @@ int AdaptiveInflight::tick() {
     double elapsed = static_cast<double>(now.QuadPart - window_start_.QuadPart) /
                      static_cast<double>(freq_.QuadPart);
 
-    // Only adjust every ~3 seconds (was 2s) to smooth out small jitters
-    if (elapsed < 3.0) return target_.load();
+    // Measure every ~2 seconds — fast enough to react to SMB stalls,
+    // slow enough to avoid fighting TCP's own congestion control (~RTT scale).
+    if (elapsed < 2.0) return target_.load();
 
     uint64_t bytes = bytes_window_.exchange(0, std::memory_order_relaxed);
     double throughput = static_cast<double>(bytes) / elapsed;
@@ -255,15 +256,17 @@ int AdaptiveInflight::tick() {
 
     int current = target_.load();
 
-    // ── Smoothed AIMD: Additive Increase, Multiplicative Decrease ──
-    // Like TCP congestion control, but with a bit more smoothing for WAN.
+    // ── Gentle AIMD — complement TCP, don't duplicate it ──
+    // TCP already has per-RTT congestion control.  This adaptive controller
+    // only guards against application-level stalls (SMB server overwhelm).
+    // Cuts are deliberately gentle to avoid compounding with TCP's AIMD.
 
     if (throughput < 1.0 && prev_throughput_ > 1.0) {
-        // ── STALL DETECTED ──
+        // ── STALL DETECTED (near-zero throughput) ──
         stall_count_++;
-        if (stall_count_ >= 2) {
-            // Only halve after two consecutive near-zero ticks
-            current = current * 2 / 3; // Saner reduction than 1/2
+        if (stall_count_ >= 3) {
+            // Only cut after 3 consecutive near-zero ticks (~6 seconds)
+            current = current * 5 / 6; // -17% (gentle)
             if (current < min_) current = min_;
             direction_ = -1;
             stable_count_ = 0;
@@ -271,34 +274,34 @@ int AdaptiveInflight::tick() {
     } else if (prev_throughput_ > 0.0) {
         double improvement = (throughput - prev_throughput_) / prev_throughput_;
 
-        if (improvement < -0.40) { // More lenient than 30%
+        if (improvement < -0.40) {
             // Severe throughput drop (>40%) - likely server struggling.
             stall_count_++;
-            if (stall_count_ >= 2) {
-                current = current * 3 / 4;  // Reduce by 25% (gentler than 1/3)
+            if (stall_count_ >= 3) {
+                current = current * 85 / 100;  // -15% (was -25%)
                 if (current < min_) current = min_;
                 direction_ = -1;
                 stable_count_ = 0;
             }
-        } else if (improvement > 0.03) { // Slightly higher threshold for increase
+        } else if (improvement > 0.03) {
             // Throughput improved - switch back to ramp-up mode
             stable_count_ = 0;
             stall_count_ = 0;
-            direction_ = 1; 
+            direction_ = 1;
 
             if (current > best_target_) best_target_ = current;
             if (current < max_) {
-                int step = current / 5; // +20%
+                int step = current / 4; // +25% (was +20%)
                 if (step < 1) step = 1;
                 current += step;
                 if (current > max_) current = max_;
             }
-        } else if (improvement < -0.10) { // More lenient (10% instead of 5%)
-            // Moderate throughput drop - reverse direction
+        } else if (improvement < -0.10) {
+            // Moderate throughput drop - nudge down gently
             stable_count_ = 0;
             direction_ = -1;
             if (current > min_) {
-                int step = current / 10; // -10%
+                int step = current / 20; // -5% (was -10%)
                 if (step < 1) step = 1;
                 current -= step;
                 if (current < min_) current = min_;
@@ -308,15 +311,15 @@ int AdaptiveInflight::tick() {
             stall_count_ = 0;
             if (current > best_target_) best_target_ = current;
             stable_count_++;
-            if (stable_count_ >= 3 && current < max_) {
-                // If we are significantly below our best known target, probe faster
+            if (stable_count_ >= 2 && current < max_) {
+                // Faster probing (every 2 stable ticks instead of 3)
                 int inc = 1;
-                if (current < best_target_ * 3 / 4) inc = current / 10;
+                if (current < best_target_ * 3 / 4) inc = current / 8;
                 if (inc < 1) inc = 1;
 
                 current += inc;
                 stable_count_ = 0;
-                direction_ = 1; // Allow fast ramp-up on next tick if throughput holds
+                direction_ = 1;
             }
         }
     } else {
@@ -338,10 +341,9 @@ int AdaptiveInflight::tick() {
 void AdaptiveInflight::force_reduce(int new_target) {
     if (new_target < min_) new_target = min_;
     target_.store(new_target);
-    // Lower the ceiling so we don't grow back to the stall point.
-    // Allow probing up to 1.5× the recovery target.
-    max_ = new_target + new_target / 2;
-    if (max_ < min_ * 2) max_ = min_ * 2;
+    // Don't permanently lower max_ — allow full recovery after transient stalls.
+    // TCP already handles congestion; the adaptive controller should only guard
+    // against application-level SMB server overwhelm, not compound TCP's AIMD.
     direction_ = -1;
     stable_count_ = 0;
     stall_count_++;

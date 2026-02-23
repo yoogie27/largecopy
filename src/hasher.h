@@ -34,7 +34,7 @@ private:
     };
 
     SLIST_HEADER         queue_;
-    HANDLE               wake_event_   = nullptr;
+    HANDLE               wake_event_   = nullptr;  // semaphore: 1 count per enqueue
     HANDLE*              threads_      = nullptr;
     int                  thread_count_ = 0;
     volatile bool        running_      = false;

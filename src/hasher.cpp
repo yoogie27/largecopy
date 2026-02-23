@@ -14,10 +14,12 @@ bool HashPool::start(int thread_count, HashCompleteCallback callback, void* user
 
     InitializeSListHead(&queue_);
 
-    // Manual-reset event: we signal it whenever work is enqueued
-    wake_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    // Semaphore: each enqueue releases 1 count, waking exactly one thread.
+    // Unlike an auto-reset event, a semaphore accumulates counts so that
+    // N rapid enqueues wake N threads (instead of only the first).
+    wake_event_ = CreateSemaphoreW(nullptr, 0, LONG_MAX, nullptr);
     if (!wake_event_) {
-        lc_error(L"Failed to create hash pool wake event: %u", GetLastError());
+        lc_error(L"Failed to create hash pool wake semaphore: %u", GetLastError());
         return false;
     }
 
@@ -46,7 +48,7 @@ void HashPool::enqueue(ChunkContext* ctx) {
 
     node->ctx = ctx;
     InterlockedPushEntrySList(&queue_, &node->entry);
-    SetEvent(wake_event_);
+    ReleaseSemaphore(wake_event_, 1, nullptr);
 }
 
 void HashPool::stop() {
@@ -54,9 +56,7 @@ void HashPool::stop() {
 
     // Wake all threads
     if (wake_event_) {
-        for (int i = 0; i < thread_count_; i++) {
-            SetEvent(wake_event_);
-        }
+        ReleaseSemaphore(wake_event_, thread_count_, nullptr);
     }
 
     if (threads_) {
