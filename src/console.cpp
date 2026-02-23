@@ -168,10 +168,10 @@ void print_progress(const TransferStats& stats) {
                      static_cast<double>(g_qpc_freq.QuadPart);
     if (elapsed < 0.001) elapsed = 0.001;
 
-    // Rate based on actual bytes transferred (exclude skipped sparse/delta)
-    uint64_t actual = (transferred > stats.bytes_skipped)
-                      ? transferred - stats.bytes_skipped : 0;
-    double rate = static_cast<double>(actual) / elapsed;
+    // Rate based only on bytes moved in this session (exclude resume baseline)
+    uint64_t session_bytes = (transferred > stats.resume_bytes)
+                             ? transferred - stats.resume_bytes : 0;
+    double rate = static_cast<double>(session_bytes) / elapsed;
 
     // Progress includes all bytes (transferred + skipped)
     double pct = (stats.total_bytes > 0)
@@ -264,12 +264,15 @@ void print_summary(const TransferStats& stats) {
     if (elapsed < 0.001) elapsed = 0.001;
 
     uint64_t transferred = stats.bytes_transferred.load();
-    uint64_t actual = (transferred > stats.bytes_skipped)
-                      ? transferred - stats.bytes_skipped : 0;
-    double rate = (elapsed > 0.001) ? static_cast<double>(actual) / elapsed : 0.0;
+    uint64_t session_bytes = (transferred > stats.resume_bytes)
+                             ? transferred - stats.resume_bytes : 0;
+    uint64_t actual_total = (transferred > stats.bytes_skipped)
+                            ? transferred - stats.bytes_skipped : 0;
+    double rate = (elapsed > 0.001) ? static_cast<double>(session_bytes) / elapsed : 0.0;
 
-    wchar_t size_buf[64], rate_buf[64];
-    format_bytes(actual, size_buf, 64);
+    wchar_t total_buf[64], session_buf[64], rate_buf[64];
+    format_bytes(actual_total, total_buf, 64);
+    format_bytes(session_bytes, session_buf, 64);
     format_rate(rate, rate_buf, 64);
 
     uint32_t failed = stats.chunks_failed.load();
@@ -278,18 +281,28 @@ void print_summary(const TransferStats& stats) {
 
     con_printf(L"\n");
     if (aborted) {
-        wchar_t total_buf[64];
-        format_bytes(stats.total_bytes, total_buf, 64);
+        wchar_t total_size_buf[64];
+        format_bytes(stats.total_bytes, total_size_buf, 64);
         con_printf(L"\x1b[93mTransfer interrupted\x1b[0m after %.1fs \u2014 %s / %s (%u/%u chunks)\n",
-                   elapsed, size_buf, total_buf, verified, stats.total_chunks);
+                   elapsed, total_buf, total_size_buf, verified, stats.total_chunks);
         con_printf(L"Run \x1b[97mlargecopy copy\x1b[0m again to resume automatically\n");
     } else if (failed == 0) {
-        con_printf(L"\x1b[92mTransfer complete\x1b[0m in %.1fs \u2014 %s at %s avg\n",
-                   elapsed, size_buf, rate_buf);
+        if (stats.resume_bytes > 0) {
+            con_printf(L"\x1b[92mTransfer complete\x1b[0m in %.1fs \u2014 %s this run (%s total) at %s avg\n",
+                       elapsed, session_buf, total_buf, rate_buf);
+        } else {
+            con_printf(L"\x1b[92mTransfer complete\x1b[0m in %.1fs \u2014 %s at %s avg\n",
+                       elapsed, total_buf, rate_buf);
+        }
         con_printf(L"All %u chunks verified \x1b[92m[OK]\x1b[0m\n", verified);
     } else {
-        con_printf(L"\x1b[93mTransfer finished with errors\x1b[0m in %.1fs \u2014 %s at %s avg\n",
-                   elapsed, size_buf, rate_buf);
+        if (stats.resume_bytes > 0) {
+            con_printf(L"\x1b[93mTransfer finished with errors\x1b[0m in %.1fs \u2014 %s this run (%s total) at %s avg\n",
+                       elapsed, session_buf, total_buf, rate_buf);
+        } else {
+            con_printf(L"\x1b[93mTransfer finished with errors\x1b[0m in %.1fs \u2014 %s at %s avg\n",
+                       elapsed, total_buf, rate_buf);
+        }
         con_printf(L"\x1b[92m%u chunks verified\x1b[0m | \x1b[91m%u chunks FAILED\x1b[0m\n",
                    verified, failed);
         con_printf(L"Run \x1b[97mlargecopy resume\x1b[0m to retry failed chunks\n");

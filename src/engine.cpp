@@ -802,6 +802,7 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     }
     stats_.bytes_transferred.store(already_done);
     stats_.bytes_skipped = skip_bytes;
+    stats_.resume_bytes  = already_done;
 
     // ── Submit initial batch of reads ──
     int initial = use_adaptive_ ? adaptive_.target() : cfg.inflight;

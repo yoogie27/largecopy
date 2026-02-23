@@ -137,6 +137,7 @@ struct TransferStats {
     std::atomic<int>      current_inflight{0}; // adaptive inflight gauge
     std::atomic<int>      writes_outstanding{0}; // pending write ops in SMB pipeline
     uint64_t              bytes_skipped{0};    // bytes from sparse/delta (not transferred)
+    uint64_t              resume_bytes{0};     // bytes already complete when this run started
     std::atomic<bool>     finished{false};
     std::atomic<bool>     aborted{false};
     LARGE_INTEGER         start_time{};
