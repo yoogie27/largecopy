@@ -896,8 +896,28 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
         if (stats_.net_stats_active) {
             NetStats ns = {};
             netstats_sample(ns);
+            
             stats_.net_retrans_delta = ns.retrans_pkts - prev_net_stats_.retrans_pkts;
             stats_.net_timeouts      = ns.timeouts;
+            stats_.net_rtt_ms        = ns.rtt_ms;
+            stats_.net_cwnd          = ns.cwnd;
+
+            // Calculate percentage of time spent in each limit state during the last tick (250ms)
+            uint64_t dr = ns.lim_rwin_ms - prev_net_stats_.lim_rwin_ms;
+            uint64_t dc = ns.lim_cwnd_ms - prev_net_stats_.lim_cwnd_ms;
+            uint64_t ds = ns.lim_sender_ms - prev_net_stats_.lim_sender_ms;
+            uint64_t total_lim = dr + dc + ds;
+
+            if (total_lim > 0) {
+                stats_.net_lim_rwin_pct   = static_cast<uint32_t>((dr * 100) / total_lim);
+                stats_.net_lim_cwnd_pct   = static_cast<uint32_t>((dc * 100) / total_lim);
+                stats_.net_lim_sender_pct = static_cast<uint32_t>((ds * 100) / total_lim);
+            } else {
+                stats_.net_lim_rwin_pct   = 0;
+                stats_.net_lim_cwnd_pct   = 0;
+                stats_.net_lim_sender_pct = 0;
+            }
+
             prev_net_stats_ = ns;
         }
 

@@ -11,6 +11,14 @@ struct NetStats {
     uint32_t timeouts;         // retransmit timeout expirations
     uint32_t dup_acks;         // duplicate ACKs received
     uint32_t cong_signals;     // congestion signals
+    
+    // New metrics for bottleneck analysis
+    uint32_t rtt_ms;           // smoothed RTT in ms
+    uint32_t cwnd;             // congestion window (segments)
+    uint64_t lim_rwin_ms;      // cumulative time limited by receive window
+    uint64_t lim_cwnd_ms;      // cumulative time limited by congestion window
+    uint64_t lim_sender_ms;    // cumulative time limited by sender (app/disk)
+
     int      conn_count;       // number of tracked TCP connections
     bool     available;        // true if EStats are working
 };

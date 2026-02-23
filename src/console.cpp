@@ -241,8 +241,18 @@ void print_progress(const TransferStats& stats) {
     if (stats.connections > 1 || stats.net_stats_active || writes_out > 0) {
         con_printf(L" Net:");
         if (stats.net_stats_active) {
-            con_printf(L" %u retrans | %u timeouts |",
-                       stats.net_retrans_delta, stats.net_timeouts);
+            con_printf(L" RTT %ums | CWND %u |", stats.net_rtt_ms, stats.net_cwnd);
+            
+            // Bottleneck logic
+            if (stats.net_lim_rwin_pct > 50) 
+                con_printf(L" \x1b[93mBottleneck: Receiver (RWIN %u%%)\x1b[0m |", stats.net_lim_rwin_pct);
+            else if (stats.net_lim_cwnd_pct > 50)
+                con_printf(L" \x1b[91mBottleneck: Network (CWND %u%%)\x1b[0m |", stats.net_lim_cwnd_pct);
+            else if (stats.net_lim_sender_pct > 50)
+                con_printf(L" \x1b[96mBottleneck: App/Disk (SND %u%%)\x1b[0m |", stats.net_lim_sender_pct);
+
+            if (stats.net_retrans_delta > 0)
+                con_printf(L" \x1b[91m%u retrans\x1b[0m |", stats.net_retrans_delta);
         }
         con_printf(L" %d writes queued", writes_out);
         con_printf(L"\n");

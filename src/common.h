@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.7";
+static constexpr const wchar_t* LC_VERSION = L"3.0.8";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -152,6 +152,11 @@ struct TransferStats {
     // TCP network stats (updated by main thread each tick)
     uint32_t              net_retrans_delta{0}; // retransmits since last sample
     uint32_t              net_timeouts{0};      // cumulative retransmit timeouts
+    uint32_t              net_rtt_ms{0};
+    uint32_t              net_cwnd{0};
+    uint32_t              net_lim_rwin_pct{0};  // % of time limited by Rwin
+    uint32_t              net_lim_cwnd_pct{0};  // % of time limited by Cwnd
+    uint32_t              net_lim_sender_pct{0};// % of time limited by Sender
     bool                  net_stats_active{false}; // true if TCP EStats available
 };
 

@@ -27,24 +27,26 @@ static MIB_TCPROW to_row(const MIB_TCPROW2& r2) {
     return r;
 }
 
-// ── Enable path stats on a single connection ────────────────────────────────
-static bool enable_path_stats(MIB_TCPROW* row) {
-    // TCP_BOOLEAN_OPTIONAL: TcpBoolOptEnabled = 2
-    struct { BOOLEAN EnableCollection; } rw = { 2 };
-    DWORD err = SetPerTcpConnectionEStats(
-        row,
-        TcpConnectionEstatsPath,
+// ── Enable path and congestion stats on a single connection ─────────────────
+static bool enable_stats(MIB_TCPROW* row) {
+    struct { BOOLEAN EnableCollection; } rw = { 2 }; // TcpBoolOptEnabled = 2
+    
+    DWORD err1 = SetPerTcpConnectionEStats(
+        row, TcpConnectionEstatsPath,
         reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
-    return err == NO_ERROR;
+        
+    DWORD err2 = SetPerTcpConnectionEStats(
+        row, TcpConnectionEstatsSendCong,
+        reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+        
+    return (err1 == NO_ERROR && err2 == NO_ERROR);
 }
 
-// ── Disable path stats on a single connection ───────────────────────────────
-static void disable_path_stats(MIB_TCPROW* row) {
+// ── Disable stats on a single connection ────────────────────────────────────
+static void disable_stats(MIB_TCPROW* row) {
     struct { BOOLEAN EnableCollection; } rw = { 1 }; // TcpBoolOptDisabled = 1
-    SetPerTcpConnectionEStats(
-        row,
-        TcpConnectionEstatsPath,
-        reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsPath, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
+    SetPerTcpConnectionEStats(row, TcpConnectionEstatsSendCong, reinterpret_cast<PUCHAR>(&rw), 0, sizeof(rw), 0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -90,10 +92,10 @@ bool netstats_init(const wchar_t* server_name) {
 
     if (g_row_count == 0) return false;
 
-    // Try to enable path stats on each connection (requires admin)
+    // Try to enable stats on each connection (requires admin)
     bool any_ok = false;
     for (int i = 0; i < g_row_count; i++) {
-        if (enable_path_stats(&g_rows[i])) {
+        if (enable_stats(&g_rows[i])) {
             any_ok = true;
         }
     }
@@ -110,28 +112,48 @@ void netstats_sample(NetStats& out) {
     if (!g_available || g_row_count == 0) return;
 
     for (int i = 0; i < g_row_count; i++) {
-        TCP_ESTATS_PATH_ROD_v0 rod = {};
+        // 1. Path stats (RTT, retrans, timeouts)
+        TCP_ESTATS_PATH_ROD_v0 rod_path = {};
         DWORD err = GetPerTcpConnectionEStats(
-            &g_rows[i],
-            TcpConnectionEstatsPath,
-            nullptr, 0, 0,        // Rw  (not reading)
-            nullptr, 0, 0,        // Ros (not reading)
-            reinterpret_cast<PUCHAR>(&rod), 0, sizeof(rod));
+            &g_rows[i], TcpConnectionEstatsPath,
+            nullptr, 0, 0, nullptr, 0, 0,
+            reinterpret_cast<PUCHAR>(&rod_path), 0, sizeof(rod_path));
 
         if (err == NO_ERROR) {
-            out.retrans_pkts  += rod.PktsRetrans;
-            out.retrans_bytes += rod.BytesRetrans;
-            out.timeouts      += rod.Timeouts;
-            out.dup_acks      += rod.DupAcksIn;
-            out.cong_signals  += rod.CongSignals;
+            out.retrans_pkts  += rod_path.PktsRetrans;
+            out.retrans_bytes += rod_path.BytesRetrans;
+            out.timeouts      += rod_path.Timeouts;
+            out.dup_acks      += rod_path.DupAcksIn;
+            out.cong_signals  += rod_path.CongSignals;
+            // RTT is per-connection, we take the average
+            out.rtt_ms += rod_path.SampleRtt;
         }
+
+        // 2. Congestion stats (CWND, limit timers)
+        TCP_ESTATS_SEND_CONG_ROD_v0 rod_cong = {};
+        err = GetPerTcpConnectionEStats(
+            &g_rows[i], TcpConnectionEstatsSendCong,
+            nullptr, 0, 0, nullptr, 0, 0,
+            reinterpret_cast<PUCHAR>(&rod_cong), 0, sizeof(rod_cong));
+
+        if (err == NO_ERROR) {
+            out.cwnd           += rod_cong.CurCwnd;
+            out.lim_rwin_ms    += rod_cong.SndLimTimeRwin;
+            out.lim_cwnd_ms    += rod_cong.SndLimTimeCwnd;
+            out.lim_sender_ms  += rod_cong.SndLimTimeSnd;
+        }
+    }
+
+    if (g_row_count > 0) {
+        out.rtt_ms /= g_row_count;
+        out.cwnd   /= g_row_count; // average CWND across connections
     }
 }
 
 void netstats_cleanup() {
     if (g_available) {
         for (int i = 0; i < g_row_count; i++) {
-            disable_path_stats(&g_rows[i]);
+            disable_stats(&g_rows[i]);
         }
     }
     g_row_count = 0;
