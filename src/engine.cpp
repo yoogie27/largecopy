@@ -645,13 +645,16 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
 
     bool dst_remote = env_.dest.is_remote;
 
-    // For remote destinations: synchronous writes from hash threads.
-    // Overlapped async writes overwhelm non-Windows SMB servers (macOS smbd,
-    // Samba) causing permanent stalls. Synchronous writes are predictable
-    // and let the server process one request at a time per handle.
-    // HOWEVER: We skip this for NTFS/ReFS as Windows handles this well.
-    sync_writes_ = dst_remote &&
-                   (env_.dest.fs_type != FsType::NTFS && env_.dest.fs_type != FsType::ReFS);
+    // Default to the fastest async path. Only use synchronous writes if 
+    // the user explicitly requests 'safe' mode for network destinations.
+    // Sync mode helps with some Non-Windows SMB servers (Samba, macOS) 
+    // that may stall under heavy overlapped I/O.
+    sync_writes_ = cfg.force_safe_net && dst_remote;
+
+    // User override: --ssd always forces async path (no sync fallback)
+    if (cfg.force_ssd) {
+        sync_writes_ = false;
+    }
 
     // ── Open source handles (always async via IOCP for fast reads) ──
     if (conn_count > 1) {
@@ -688,18 +691,33 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
         stats_.connections = 1;
     } else if (conn_count > 1) {
         // Local multi-connection: async overlapped via IOCP
-        if (!dst_pool_.open_write(hdr->dest_path, conn_count, iocp_, IOCP_KEY_WRITE)) {
+        if (!dst_pool_.open_write(hdr->dest_path, conn_count, iocp_, IOCP_KEY_WRITE, cfg.force_ssd)) {
             lc_error(L"Failed to open destination connection pool");
             return 1;
         }
         stats_.connections = conn_count;
     } else {
         // Local single-connection: async overlapped via IOCP
+        DWORD wflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
+        
+        // For remote single-handle, match ConnPool logic:
+        if (dst_remote) {
+            bool use_nb = cfg.force_ssd;
+            if (env_.dest.fs_type == FsType::NTFS || env_.dest.fs_type == FsType::ReFS) {
+                use_nb = true;
+            }
+            if (!use_nb) {
+                wflags = FILE_FLAG_OVERLAPPED; // buffered for non-Windows remote
+            } else if (!cfg.force_ssd) {
+                wflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING; // no write-through for network by default
+            } else {
+                wflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH; // force_ssd = full performance
+            }
+        }
+        
         dst_handle_ = CreateFileW(
             hdr->dest_path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr, OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
-            nullptr);
+            nullptr, OPEN_EXISTING, wflags, nullptr);
         if (dst_handle_ == INVALID_HANDLE_VALUE) {
             lc_error(L"Cannot open destination file '%s': %u", hdr->dest_path, GetLastError());
             return 1;
@@ -852,6 +870,8 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
                     CancelIoEx(dst_handle_, nullptr);
                 }
             }
+            // Wake main loop immediately
+            SetEvent(done_event_);
             break;
         }
 
@@ -922,20 +942,34 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
     }
 
     // ── Shutdown ──
+    if (stats_.aborted.load() && cfg.fast_abort) {
+        lc_warn(L"Fast abort: skipping thread join and ledger flush");
+        // We still need to close handles to avoid leaks, but we don't wait for threads
+        src_pool_.close();
+        dst_pool_.close();
+        if (src_handle_ != INVALID_HANDLE_VALUE) { CloseHandle(src_handle_); src_handle_ = INVALID_HANDLE_VALUE; }
+        if (dst_handle_ != INVALID_HANDLE_VALUE) { CloseHandle(dst_handle_); dst_handle_ = INVALID_HANDLE_VALUE; }
+        if (tail_read_handle_ != INVALID_HANDLE_VALUE) { CloseHandle(tail_read_handle_); tail_read_handle_ = INVALID_HANDLE_VALUE; }
+        if (iocp_) { CloseHandle(iocp_); iocp_ = nullptr; }
+        return 3;
+    }
+
     for (int i = 0; i < io_thread_count_; i++) {
         PostQueuedCompletionStatus(iocp_, 0, IOCP_KEY_QUIT, nullptr);
     }
-    WaitForMultipleObjects(io_thread_count_, io_threads_, TRUE, 5000);
+    WaitForMultipleObjects(io_thread_count_, io_threads_, TRUE, 2000); // reduced timeout from 5000
 
     if (!cfg.no_checksum) {
         hash_pool_.stop();
     }
 
-    // Flush ledger
-    if (ledger.all_done()) {
-        ledger.mark_completed();
+    // Flush ledger (skip if aborted)
+    if (!stats_.aborted.load()) {
+        if (ledger.all_done()) {
+            ledger.mark_completed();
+        }
+        ledger.flush();
     }
-    ledger.flush();
 
     // Flush destination data to stable storage (critical for remote targets
     // where write-back caching means data may still be in server RAM).

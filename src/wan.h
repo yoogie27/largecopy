@@ -17,7 +17,7 @@ public:
     bool open_read(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key);
 
     // Open `count` write handles to `path`, all associated with `iocp`.
-    bool open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key);
+    bool open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key, bool force_ssd = false);
 
     // Get next handle via round-robin.
     HANDLE next();

@@ -347,9 +347,16 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
     // ── Strategy based on storage types ──
 
     // Case 1: Local SSD/NVMe → Local SSD/NVMe (fastest possible)
+    // Allow user to force SSD behavior on destination with --ssd.
     if (!any_remote) {
         DiskType src_dt = env.source.disk_type;
         DiskType dst_dt = env.dest.disk_type;
+        if (cfg.force_ssd) {
+            dst_dt = DiskType::SSD;
+            src_dt = DiskType::SSD;
+            env.dest.disk_type = DiskType::SSD;
+            env.source.disk_type = DiskType::SSD;
+        }
 
         if ((src_dt == DiskType::NVMe || src_dt == DiskType::SSD) &&
             (dst_dt == DiskType::NVMe || dst_dt == DiskType::SSD)) {
@@ -357,12 +364,12 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
             if (!user_set_chunk) cfg.chunk_size = 64 * 1024 * 1024; // 64 MB
         }
         // Case 2: HDD source → anything (sequential reads, moderate parallelism)
-        else if (src_dt == DiskType::HDD) {
+        else if (src_dt == DiskType::HDD && !cfg.force_ssd) {
             if (!user_set_inflight) cfg.inflight = 4; // less parallelism for HDD
             if (!user_set_chunk) cfg.chunk_size = 32 * 1024 * 1024; // 32 MB
         }
         // Case 3: anything → HDD dest (don't overwhelm the spindle)
-        else if (dst_dt == DiskType::HDD) {
+        else if (dst_dt == DiskType::HDD && !cfg.force_ssd) {
             if (!user_set_inflight) cfg.inflight = 4;
         }
 

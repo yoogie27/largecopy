@@ -52,7 +52,7 @@ bool ConnPool::open_read(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR 
     return true;
 }
 
-bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key) {
+bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key, bool force_ssd) {
     is_read_ = false;
 
     // Detect if destination is remote (UNC or mapped network drive)
@@ -67,8 +67,8 @@ bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR
     if (remote) {
         // For remote: check if it's NTFS/ReFS. If so, we can use NO_BUFFERING safely.
         // Some non-Windows servers (macOS smbd) still struggle with it, so we default
-        // to buffered for Unknown/FAT32/exFAT.
-        bool use_no_buffering = false;
+        // to buffered for Unknown/FAT32/exFAT unless force_ssd is set.
+        bool use_no_buffering = force_ssd;
         wchar_t share_root[MAX_PATH_EXTENDED] = {};
         if (path[0] == L'\\' && path[1] == L'\\') {
             const wchar_t* p = path + 2;
@@ -86,7 +86,7 @@ bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR
             share_root[3] = L'\0';
         }
 
-        if (share_root[0]) {
+        if (share_root[0] && !use_no_buffering) {
             wchar_t fs_name[32] = {};
             if (GetVolumeInformationW(share_root, nullptr, 0, nullptr, nullptr, nullptr, fs_name, 32)) {
                 if (_wcsicmp(fs_name, L"NTFS") == 0 || _wcsicmp(fs_name, L"ReFS") == 0) {
@@ -96,9 +96,11 @@ bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR
         }
 
         if (use_no_buffering) {
-            // Use NO_BUFFERING to bypass local cache, but skip WRITE_THROUGH
-            // for remote - let the server decide its own commit policy.
+            // Use NO_BUFFERING to bypass local cache.
+            // When force_ssd is requested, we also add WRITE_THROUGH to push through
+            // server-side write-back caches (like on some high-end NAS).
             flags_ = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING;
+            if (force_ssd) flags_ |= FILE_FLAG_WRITE_THROUGH;
         } else {
             // Non-Windows / Legacy SMB: drop both NO_BUFFERING and WRITE_THROUGH.
             // Let the Windows SMB client cache writes and flush to server asynchronously.
@@ -106,6 +108,7 @@ bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR
         }
     } else {
         // Local: bypass cache for maximum throughput on SSD/NVMe
+        // When force_ssd is set, still use NO_BUFFERING|WRITE_THROUGH.
         flags_ = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
     }
     wcsncpy(path_, path, MAX_PATH_EXTENDED - 1);
@@ -238,8 +241,8 @@ int AdaptiveInflight::tick() {
     double elapsed = static_cast<double>(now.QuadPart - window_start_.QuadPart) /
                      static_cast<double>(freq_.QuadPart);
 
-    // Only adjust every ~2 seconds
-    if (elapsed < 2.0) return target_.load();
+    // Only adjust every ~3 seconds (was 2s) to smooth out small jitters
+    if (elapsed < 3.0) return target_.load();
 
     uint64_t bytes = bytes_window_.exchange(0, std::memory_order_relaxed);
     double throughput = static_cast<double>(bytes) / elapsed;
@@ -248,71 +251,65 @@ int AdaptiveInflight::tick() {
 
     int current = target_.load();
 
-    // ── AIMD: Additive Increase, Multiplicative Decrease ──
-    // Like TCP congestion control. We probe upward cautiously and
-    // cut back aggressively on stalls. This finds the sweet spot
-    // for any server (Windows, macOS smbd, Samba, NAS).
+    // ── Smoothed AIMD: Additive Increase, Multiplicative Decrease ──
+    // Like TCP congestion control, but with a bit more smoothing for WAN.
 
     if (throughput < 1.0 && prev_throughput_ > 1.0) {
         // ── STALL DETECTED ──
-        // Throughput collapsed to near-zero. The server is overwhelmed.
-        // Multiplicative decrease: halve immediately.
         stall_count_++;
-        current = current / 2;
-        if (current < min_) current = min_;
-        direction_ = -1;
-        stable_count_ = 0;
-
         if (stall_count_ >= 2) {
-            // Consecutive stalls - go to minimum. Something is seriously
-            // wrong at this concurrency level.
-            current = min_;
-        }
-    } else if (prev_throughput_ > 0.0) {
-        stall_count_ = 0;  // not stalled
-        double improvement = (throughput - prev_throughput_) / prev_throughput_;
-
-        if (improvement < -0.30) {
-            // Severe throughput drop (>30%) - likely server struggling.
-            // Multiplicative decrease (halve).
-            current = current * 2 / 3;  // reduce by 1/3
+            // Only halve after two consecutive near-zero ticks
+            current = current * 2 / 3; // Saner reduction than 1/2
             if (current < min_) current = min_;
             direction_ = -1;
             stable_count_ = 0;
-        } else if (improvement > 0.02) {
-            // Throughput improved - remember this as a known-good level
-            // and keep probing upward (additive increase).
+        }
+    } else if (prev_throughput_ > 0.0) {
+        double improvement = (throughput - prev_throughput_) / prev_throughput_;
+
+        if (improvement < -0.40) { // More lenient than 30%
+            // Severe throughput drop (>40%) - likely server struggling.
+            stall_count_++;
+            if (stall_count_ >= 2) {
+                current = current * 3 / 4;  // Reduce by 25% (gentler than 1/3)
+                if (current < min_) current = min_;
+                direction_ = -1;
+                stable_count_ = 0;
+            }
+        } else if (improvement > 0.03) { // Slightly higher threshold for increase
+            // Throughput improved
             stable_count_ = 0;
             stall_count_ = 0;
             if (current > best_target_) best_target_ = current;
             if (direction_ > 0 && current < max_) {
-                int step = current / 4; // +25%
+                int step = current / 5; // +20% (slower ramp up)
                 if (step < 1) step = 1;
                 current += step;
                 if (current > max_) current = max_;
             }
-        } else if (improvement < -0.05) {
+        } else if (improvement < -0.10) { // More lenient (10% instead of 5%)
             // Moderate throughput drop - reverse direction
             stable_count_ = 0;
             direction_ = -direction_;
             if (direction_ < 0 && current > min_) {
-                int step = current / 8; // -12.5%
+                int step = current / 10; // -10%
                 if (step < 1) step = 1;
                 current -= step;
                 if (current < min_) current = min_;
             }
         } else {
-            // Stable - remember this level. Probe up cautiously.
+            // Stable - probe up very cautiously.
+            stall_count_ = 0;
             if (current > best_target_) best_target_ = current;
             stable_count_++;
-            if (stable_count_ >= 5 && current < max_) {
-                current += 1;  // tiny additive probe
+            if (stable_count_ >= 4 && current < max_) {
+                current += 1;
                 stable_count_ = 0;
                 direction_ = 1;
             }
         }
     } else {
-        // First measurement - moderate ramp-up (50% increase).
+        // First measurement - moderate ramp-up
         stall_count_ = 0;
         if (current < max_) {
             int step = current / 2;

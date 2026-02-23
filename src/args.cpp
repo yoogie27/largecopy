@@ -49,6 +49,8 @@ void print_usage() {
         L"  --verbose           Detailed per-chunk output\n"
         L"  --dry-run           Show what would be done\n"
         L"  --quiet             Minimal output\n"
+        L"  --ssd              Treat destination as SSD/NVMe (force async, skip HDD throttles)\n"
+        L"  --safe-net         Force synchronous writes for network destinations (slower, safer)\n"
         L"\n"
         L"WAN Optimization:\n"
         L"  --wan               Enable WAN mode (auto-tune for high latency)\n"
@@ -145,7 +147,9 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
             if (++i >= argc) { lc_error(L"--retries requires a value"); return false; }
             if (!parse_int(argv[i], cfg.retries)) { lc_error(L"Invalid retry count: %s", argv[i]); return false; }
         }
-        else if (wcscmp(arg, L"--no-checksum") == 0)    cfg.no_checksum  = true;
+        else if (wcscmp(arg, L"--ssd") == 0)            cfg.force_ssd      = true;
+        else if (wcscmp(arg, L"--safe-net") == 0)       cfg.force_safe_net = true;
+        else if (wcscmp(arg, L"--no-checksum") == 0)    cfg.no_checksum    = true;
         else if (wcscmp(arg, L"--compress") == 0)        cfg.compress     = true;
         else if (wcscmp(arg, L"--verify-after") == 0)    cfg.verify_after = true;
         else if (wcscmp(arg, L"--force") == 0)           cfg.force        = true;

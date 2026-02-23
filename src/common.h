@@ -124,6 +124,9 @@ struct Config {
     int      max_writes    = 0;         // max outstanding writes (0 = unlimited)
     bool     sparse        = false;     // sparse-aware: skip zero regions
     bool     delta         = false;     // delta: skip chunks dest already has
+    bool     force_ssd     = false;     // treat destination as SSD (skip HDD throttles / buffered writes)
+    bool     force_safe_net = false;    // force synchronous writes for network destinations (safe mode)
+    bool     fast_abort    = true;      // speed up Ctrl+C by skipping cleanup
     ProfileType profile    = ProfileType::None; // optional tuning profile
 };
 
