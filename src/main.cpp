@@ -38,6 +38,11 @@ int wmain(int argc, wchar_t* argv[]) {
         return 0;
     }
 
+    if (cfg.command == Command::Version) {
+        wprintf(L"largecopy %s\n", LC_VERSION);
+        return 0;
+    }
+
     CopyEngine engine;
 
     switch (cfg.command) {

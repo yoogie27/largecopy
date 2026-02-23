@@ -94,6 +94,7 @@ You don't need to understand any of the internals. Just run `largecopy <source> 
 - Enables sparse file detection for NTFS/ReFS
 - Enables adaptive throughput monitoring for network destinations
 - Measures round-trip time and calculates bandwidth-delay product for WAN paths
+- Monitors TCP connection health (retransmits, bottleneck analysis, MSS detection)
 - Bounds memory usage to 75% of available RAM
 
 **Auto-resume:**
@@ -397,11 +398,13 @@ Shows the auto-detected environment, auto-configured settings, and exits without
 | `--buffered` | off | Use Windows system cache (slower, but plays better with antivirus/DLP). |
 | `--wan` | auto | WAN mode. Auto-enabled for network destinations. |
 | `--adaptive` | auto | Auto-tune inflight depth in real-time. |
+| `--no-adaptive` | — | Disable adaptive tuning (fixed inflight). |
 | `--sparse` | auto | Skip zero-filled regions in sparse files. |
 | `--delta` | off | Skip chunks destination already has (hash compare). |
 | `--verbose` | off | Print per-chunk completion details. |
 | `--dry-run` | off | Show config and exit without copying. |
 | `--quiet` | off | Suppress progress display. |
+| `--version` | — | Print version and exit. |
 
 ---
 
@@ -409,7 +412,7 @@ Shows the auto-detected environment, auto-configured settings, and exits without
 
 ### Prerequisites
 
-- **Visual Studio Build Tools 2019+** with C++ desktop workload
+- **Visual Studio Build Tools 2022+** with C++ desktop workload
 - Windows 10 / Windows Server 2016 or later
 - x64 only
 
@@ -482,7 +485,7 @@ all_done() = all chunks Verified/Sparse/DeltaMatch
 
 **Sync writes for non-Windows SMB servers:** Some macOS smbd and Samba versions struggle with async overlapped writes from multiple threads. largecopy defaults to the fastest async path, but you can use `--safe-net` to switch to synchronous writes from hash threads, gated by a semaphore. This prevents overwhelming the server while maintaining read/hash pipelining.
 
-**Adaptive inflight (AIMD):** For network transfers, the pipeline depth is adjusted in real-time. Throughput increases → ramp up 20%. Throughput drops → back off 10%. The controller uses a 3-second observation window and smoothed AIMD to handle WAN jitter without performance collapse.
+**Adaptive inflight (AIMD):** For network transfers, the pipeline depth is adjusted in real-time. Throughput increases → ramp up 25%. Throughput drops → back off 5–15%. The controller uses a 2-second observation window and smoothed AIMD to handle WAN jitter without performance collapse.
 
 **SSD/NVMe Overrides:** If the storage detection engine identifies a disk as HDD (common in VMs), use `--ssd` to force SSD-optimized defaults and bypass the 4-chunk HDD pipeline limit. This also forces high-performance unbuffered I/O on network paths.
 
@@ -510,6 +513,7 @@ largecopy/
     ├── detect.h / detect.cpp Storage/system/network detection
     ├── wan.h / wan.cpp       Connection pool, adaptive, sparse, delta
     ├── smb.h / smb.cpp       SMB compression
+    ├── netstats.h / .cpp     TCP connection stats (EStats API)
     └── privilege.h / .cpp    SetFileValidData privilege
 ```
 

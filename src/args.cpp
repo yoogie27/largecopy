@@ -62,6 +62,7 @@ void print_usage() {
         L"  --delta             Skip chunks dest already has (hash compare)\n"
         L"\n"
         L"  -h, --help          Show this help message\n"
+        L"  --version           Show version and exit\n"
         L"\n"
         L"Examples:\n"
         L"  largecopy D:\\backup.vhdx \\\\server\\share\\backup.vhdx\n"
@@ -99,6 +100,9 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
     else if (_wcsicmp(cmd, L"help") == 0 || _wcsicmp(cmd, L"-h") == 0 ||
              _wcsicmp(cmd, L"--help") == 0) {
         cfg.command = Command::Help;
+        return true;
+    } else if (_wcsicmp(cmd, L"version") == 0 || _wcsicmp(cmd, L"--version") == 0) {
+        cfg.command = Command::Version;
         return true;
     } else if (cmd[0] == L'-') {
         // Starts with dash: treat as option for implicit copy
@@ -175,6 +179,10 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
         }
         else if (wcscmp(arg, L"-h") == 0 || wcscmp(arg, L"--help") == 0) {
             cfg.command = Command::Help;
+            return true;
+        }
+        else if (wcscmp(arg, L"--version") == 0) {
+            cfg.command = Command::Version;
             return true;
         }
         else if (arg[0] == L'-') {

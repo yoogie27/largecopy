@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.14";
+static constexpr const wchar_t* LC_VERSION = L"3.0.15";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -86,7 +86,8 @@ enum class Command {
     Bench,
     Compare,
     Hash,
-    Help
+    Help,
+    Version
 };
 
 enum class ProfileType {
