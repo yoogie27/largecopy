@@ -277,12 +277,14 @@ int AdaptiveInflight::tick() {
                 stable_count_ = 0;
             }
         } else if (improvement > 0.03) { // Slightly higher threshold for increase
-            // Throughput improved
+            // Throughput improved - switch back to ramp-up mode
             stable_count_ = 0;
             stall_count_ = 0;
+            direction_ = 1; 
+
             if (current > best_target_) best_target_ = current;
-            if (direction_ > 0 && current < max_) {
-                int step = current / 5; // +20% (slower ramp up)
+            if (current < max_) {
+                int step = current / 5; // +20%
                 if (step < 1) step = 1;
                 current += step;
                 if (current > max_) current = max_;
@@ -290,22 +292,27 @@ int AdaptiveInflight::tick() {
         } else if (improvement < -0.10) { // More lenient (10% instead of 5%)
             // Moderate throughput drop - reverse direction
             stable_count_ = 0;
-            direction_ = -direction_;
-            if (direction_ < 0 && current > min_) {
+            direction_ = -1;
+            if (current > min_) {
                 int step = current / 10; // -10%
                 if (step < 1) step = 1;
                 current -= step;
                 if (current < min_) current = min_;
             }
         } else {
-            // Stable - probe up very cautiously.
+            // Stable - probe up more ambitiously if far below best_target_
             stall_count_ = 0;
             if (current > best_target_) best_target_ = current;
             stable_count_++;
-            if (stable_count_ >= 4 && current < max_) {
-                current += 1;
+            if (stable_count_ >= 3 && current < max_) {
+                // If we are significantly below our best known target, probe faster
+                int inc = 1;
+                if (current < best_target_ * 3 / 4) inc = current / 10;
+                if (inc < 1) inc = 1;
+
+                current += inc;
                 stable_count_ = 0;
-                direction_ = 1;
+                direction_ = 1; // Allow fast ramp-up on next tick if throughput holds
             }
         }
     } else {
