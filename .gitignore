@@ -6,3 +6,9 @@ build/
 *.tmp
 *.lcledger
 .vs/
+test_results.txt
+CMakeCache.txt
+cmake.check_cache
+CMakeConfigureLog.yaml
+CMakeSystem.cmake
+CLAUDE.md

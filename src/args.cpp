@@ -54,6 +54,7 @@ void print_usage() {
         L"  --wan               Enable WAN mode (auto-tune for high latency)\n"
         L"  --connections <n>   Parallel SMB sessions (default: 4 in WAN mode)\n"
         L"  --adaptive          Auto-tune inflight based on throughput\n"
+        L"  --no-adaptive       Disable adaptive tuning (fixed inflight)\n"
         L"  --sparse            Skip zero-filled regions (sparse files)\n"
         L"  --delta             Skip chunks dest already has (hash compare)\n"
         L"\n"
@@ -152,7 +153,8 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
         else if (wcscmp(arg, L"--dry-run") == 0)         cfg.dry_run      = true;
         else if (wcscmp(arg, L"--quiet") == 0)           cfg.quiet        = true;
         else if (wcscmp(arg, L"--wan") == 0)             cfg.wan_mode     = true;
-        else if (wcscmp(arg, L"--adaptive") == 0)        cfg.adaptive     = true;
+        else if (wcscmp(arg, L"--adaptive") == 0)        { cfg.adaptive = true;  cfg.adaptive_user_set = true; }
+        else if (wcscmp(arg, L"--no-adaptive") == 0)     { cfg.adaptive = false; cfg.adaptive_user_set = true; }
         else if (wcscmp(arg, L"--sparse") == 0)          cfg.sparse       = true;
         else if (wcscmp(arg, L"--delta") == 0)           cfg.delta        = true;
         else if (wcscmp(arg, L"--connections") == 0) {
@@ -235,7 +237,8 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
     if (cfg.wan_mode) {
         if (cfg.connections == 1)
             cfg.connections = DEFAULT_CONNECTIONS;
-        cfg.adaptive = true;
+        if (!cfg.adaptive_user_set)
+            cfg.adaptive = true;
     }
 
     return true;

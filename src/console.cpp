@@ -9,6 +9,13 @@ static LARGE_INTEGER g_qpc_freq = {};
 static int g_last_lines = 0;
 static bool g_is_console = false;
 
+// ── Message queue for verbose/warn output during progress ──
+static constexpr int MSG_QUEUE_MAX = 64;
+static constexpr int MSG_MAX_LEN   = 512;
+static wchar_t  g_msg_queue[MSG_QUEUE_MAX][MSG_MAX_LEN];
+static int      g_msg_count = 0;
+static SRWLOCK  g_msg_lock  = SRWLOCK_INIT;
+
 // Write a wide string to stderr - uses WriteConsoleW if attached to console,
 // otherwise converts to UTF-8 for pipes/redirects.
 static void con_write(const wchar_t* str) {
@@ -57,6 +64,43 @@ void console_init() {
     }
 
     QueryPerformanceFrequency(&g_qpc_freq);
+}
+
+void console_queue_msg(const wchar_t* fmt, ...) {
+    wchar_t buf[MSG_MAX_LEN];
+    va_list args;
+    va_start(args, fmt);
+    int len = vswprintf(buf, MSG_MAX_LEN - 1, fmt, args);
+    va_end(args);
+    if (len <= 0) return;
+    buf[len] = L'\0';
+
+    AcquireSRWLockExclusive(&g_msg_lock);
+    if (g_msg_count < MSG_QUEUE_MAX) {
+        wcsncpy(g_msg_queue[g_msg_count], buf, MSG_MAX_LEN - 1);
+        g_msg_queue[g_msg_count][MSG_MAX_LEN - 1] = L'\0';
+        g_msg_count++;
+    }
+    ReleaseSRWLockExclusive(&g_msg_lock);
+}
+
+// Flush queued messages above the progress bar.
+// Called from print_progress under the main thread.
+static void flush_queued_msgs() {
+    AcquireSRWLockExclusive(&g_msg_lock);
+    int count = g_msg_count;
+    // Copy locally so we can release the lock quickly
+    wchar_t local[MSG_QUEUE_MAX][MSG_MAX_LEN];
+    for (int i = 0; i < count; i++) {
+        wcsncpy(local[i], g_msg_queue[i], MSG_MAX_LEN - 1);
+        local[i][MSG_MAX_LEN - 1] = L'\0';
+    }
+    g_msg_count = 0;
+    ReleaseSRWLockExclusive(&g_msg_lock);
+
+    for (int i = 0; i < count; i++) {
+        con_printf(L"%s\n", local[i]);
+    }
 }
 
 void print_banner() {
@@ -124,20 +168,31 @@ void print_progress(const TransferStats& stats) {
                      static_cast<double>(g_qpc_freq.QuadPart);
     if (elapsed < 0.001) elapsed = 0.001;
 
-    double rate = static_cast<double>(transferred) / elapsed;
+    // Rate based on actual bytes transferred (exclude skipped sparse/delta)
+    uint64_t actual = (transferred > stats.bytes_skipped)
+                      ? transferred - stats.bytes_skipped : 0;
+    double rate = static_cast<double>(actual) / elapsed;
+
+    // Progress includes all bytes (transferred + skipped)
     double pct = (stats.total_bytes > 0)
                  ? (static_cast<double>(transferred) / static_cast<double>(stats.total_bytes)) * 100.0
                  : 0.0;
     if (pct > 100.0) pct = 100.0;
 
-    double eta = (rate > 0 && stats.total_bytes > transferred)
-                 ? static_cast<double>(stats.total_bytes - transferred) / rate
+    // ETA based on actual transfer rate applied to remaining actual work
+    uint64_t remaining_total = (stats.total_bytes > transferred)
+                               ? stats.total_bytes - transferred : 0;
+    double eta = (rate > 0 && remaining_total > 0)
+                 ? static_cast<double>(remaining_total) / rate
                  : 0.0;
 
-    // Move cursor up to overwrite previous progress
+    // Move cursor up to overwrite previous progress + clear everything below
     if (g_last_lines > 0) {
-        con_printf(L"\x1b[%dA\x1b[0G", g_last_lines);
+        con_printf(L"\x1b[%dA\x1b[0J", g_last_lines);
     }
+
+    // Flush any queued verbose/warn messages (they appear above the bar)
+    flush_queued_msgs();
 
     // Progress bar (40 chars wide)
     int bar_width = 40;
@@ -183,6 +238,10 @@ void print_progress(const TransferStats& stats) {
 }
 
 void print_summary(const TransferStats& stats) {
+    // Flush any remaining queued messages before final summary
+    flush_queued_msgs();
+    g_last_lines = 0;
+
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     double elapsed = static_cast<double>(now.QuadPart - stats.start_time.QuadPart) /
@@ -190,10 +249,12 @@ void print_summary(const TransferStats& stats) {
     if (elapsed < 0.001) elapsed = 0.001;
 
     uint64_t transferred = stats.bytes_transferred.load();
-    double rate = (elapsed > 0.001) ? static_cast<double>(transferred) / elapsed : 0.0;
+    uint64_t actual = (transferred > stats.bytes_skipped)
+                      ? transferred - stats.bytes_skipped : 0;
+    double rate = (elapsed > 0.001) ? static_cast<double>(actual) / elapsed : 0.0;
 
     wchar_t size_buf[64], rate_buf[64];
-    format_bytes(transferred, size_buf, 64);
+    format_bytes(actual, size_buf, 64);
     format_rate(rate, rate_buf, 64);
 
     uint32_t failed = stats.chunks_failed.load();

@@ -20,6 +20,10 @@ void print_progress(const TransferStats& stats);
 // Print final transfer summary.
 void print_summary(const TransferStats& stats);
 
+// Queue a message to display above the progress bar on the next tick.
+// Thread-safe: can be called from IOCP/hash threads during transfer.
+void console_queue_msg(const wchar_t* fmt, ...);
+
 // Print ledger status (for 'status' command).
 void print_ledger_status(const wchar_t* ledger_path, const struct LedgerHeader* hdr,
                          uint32_t verified, uint32_t failed, uint32_t pending);

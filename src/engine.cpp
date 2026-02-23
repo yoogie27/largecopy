@@ -147,8 +147,8 @@ void CopyEngine::on_hash_complete(ChunkContext* ctx, void* user_data) {
             }
 
             if (engine->cfg_->verbose) {
-                lc_log(L"  Chunk %u verified (offset 0x%llX, %u bytes)",
-                       ctx->chunk_index, ctx->file_offset, ctx->data_length);
+                console_queue_msg(L"  Chunk %u verified (offset 0x%llX, %u bytes)",
+                                  ctx->chunk_index, ctx->file_offset, ctx->data_length);
             }
         } else {
             // Failed after all retries
@@ -333,8 +333,8 @@ void CopyEngine::on_write_complete(ChunkContext* ctx, DWORD /*bytes_transferred*
     }
 
     if (cfg_->verbose) {
-        lc_log(L"  Chunk %u verified (offset 0x%llX, %u bytes)",
-               ctx->chunk_index, ctx->file_offset, ctx->data_length);
+        console_queue_msg(L"  Chunk %u verified (offset 0x%llX, %u bytes)",
+                          ctx->chunk_index, ctx->file_offset, ctx->data_length);
     }
 
     // Return buffer to pool
@@ -771,14 +771,19 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
 
     // Account for already-done bytes (resume + sparse + delta)
     uint64_t already_done = 0;
+    uint64_t skip_bytes   = 0;
     for (uint32_t i = 0; i < hdr->chunk_count; i++) {
         ChunkState st = ledger.chunk(i)->state;
         if (st == ChunkState::Verified || st == ChunkState::Sparse ||
             st == ChunkState::DeltaMatch) {
             already_done += ledger.chunk(i)->length;
         }
+        if (st == ChunkState::Sparse || st == ChunkState::DeltaMatch) {
+            skip_bytes += ledger.chunk(i)->length;
+        }
     }
     stats_.bytes_transferred.store(already_done);
+    stats_.bytes_skipped = skip_bytes;
 
     // ── Submit initial batch of reads ──
     int initial = use_adaptive_ ? adaptive_.target() : cfg.inflight;
@@ -869,8 +874,8 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
                         if (new_target < WAN_MIN_INFLIGHT) new_target = WAN_MIN_INFLIGHT;
                         if (stall_recovery_count >= 3) new_target = WAN_MIN_INFLIGHT;
                         adaptive_.force_reduce(new_target);
-                        lc_warn(L"Write stall detected (inflight=%d) - target reduced to %d",
-                                cur, new_target);
+                        console_queue_msg(L"\x1b[93mWARN:\x1b[0m  Write stall detected (inflight=%d) - target reduced to %d",
+                                          cur, new_target);
                     }
                     stall_ticks = 0;
                     Sleep(500);

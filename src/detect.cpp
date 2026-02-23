@@ -308,6 +308,7 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
     bool user_set_conns     = (user_cfg.connections != 1);
     bool user_set_chunk     = (user_cfg.chunk_size != DEFAULT_CHUNK_SIZE);
     bool user_set_threads   = (user_cfg.io_threads != DEFAULT_IO_THREADS);
+    bool user_set_adaptive  = user_cfg.adaptive_user_set;
 
     bool src_remote = env.source.is_remote;
     bool dst_remote = env.dest.is_remote;
@@ -316,7 +317,7 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
     // ── Auto-enable WAN mode if remote detected ──
     if (any_remote && !cfg.wan_mode) {
         cfg.wan_mode = true;
-        cfg.adaptive = true;
+        if (!user_set_adaptive) cfg.adaptive = true;
     }
 
     // ── Auto-enable sparse if source supports it and is NTFS/ReFS ──
@@ -405,7 +406,7 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
             // The adaptive controller will ramp up if throughput allows.
             cfg.inflight = 8;
         }
-        cfg.adaptive = true;  // WiFi throughput varies constantly
+        if (!user_set_adaptive) cfg.adaptive = true;  // WiFi throughput varies constantly
         break;
 
     // ── VPN ─────────────────────────────────────────────────────────────
@@ -427,7 +428,7 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
             // keep the tunnel saturated. Adaptive controller will tune.
             cfg.inflight = 12;
         }
-        cfg.adaptive = true;
+        if (!user_set_adaptive) cfg.adaptive = true;
         break;
 
     // ── Cellular ────────────────────────────────────────────────────────
@@ -443,7 +444,7 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
         if (!user_set_inflight) {
             cfg.inflight = 8;             // conservative
         }
-        cfg.adaptive = true;
+        if (!user_set_adaptive) cfg.adaptive = true;
         break;
 
     // ── Ethernet (wired) or unknown ─────────────────────────────────────

@@ -119,6 +119,7 @@ struct Config {
     bool     quiet         = false;
     bool     wan_mode      = false;     // enable WAN optimizations
     bool     adaptive      = false;     // adaptive inflight tuning
+    bool     adaptive_user_set = false; // user explicitly passed --adaptive or --no-adaptive
     int      adaptive_max  = WAN_MAX_INFLIGHT; // ceiling for adaptive controller
     int      max_writes    = 0;         // max outstanding writes (0 = unlimited)
     bool     sparse        = false;     // sparse-aware: skip zero regions
@@ -134,6 +135,7 @@ struct TransferStats {
     std::atomic<uint32_t> chunks_skipped{0};   // sparse + delta skipped
     std::atomic<uint32_t> retry_count{0};
     std::atomic<int>      current_inflight{0}; // adaptive inflight gauge
+    uint64_t              bytes_skipped{0};    // bytes from sparse/delta (not transferred)
     std::atomic<bool>     finished{false};
     std::atomic<bool>     aborted{false};
     LARGE_INTEGER         start_time{};
