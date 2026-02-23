@@ -354,8 +354,6 @@ Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
         if (cfg.force_ssd) {
             dst_dt = DiskType::SSD;
             src_dt = DiskType::SSD;
-            env.dest.disk_type = DiskType::SSD;
-            env.source.disk_type = DiskType::SSD;
         }
 
         if ((src_dt == DiskType::NVMe || src_dt == DiskType::SSD) &&

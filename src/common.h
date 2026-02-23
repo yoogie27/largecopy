@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.4";
+static constexpr const wchar_t* LC_VERSION = L"3.0.5";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
