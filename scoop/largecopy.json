@@ -4,7 +4,7 @@
   "homepage": "https://github.com/yoogie27/largecopy",
   "license": "MIT",
   "url": "https://github.com/yoogie27/largecopy/releases/download/v3.0.12/largecopy.exe",
-  "hash": "",
+  "hash": "sha256:20f30735c9b4f5e942f71dce6faf461e8aa4005cb661e447c186027ebcb260b8",
   "bin": "largecopy.exe",
   "checkver": "github",
   "autoupdate": {
