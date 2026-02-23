@@ -16,6 +16,7 @@ add_executable(largecopy
     src/buffer_pool.cpp
     src/wan.cpp
     src/detect.cpp
+    src/netstats.cpp
 )
 
 target_include_directories(largecopy PRIVATE vendor)
