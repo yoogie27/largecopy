@@ -51,6 +51,7 @@ void print_usage() {
         L"  --quiet             Minimal output\n"
         L"  --ssd              Treat destination as SSD/NVMe (force async, skip HDD throttles)\n"
         L"  --safe-net         Force synchronous writes for network destinations (slower, safer)\n"
+        L"  --buffered         Use Windows system cache (slower, but plays better with antivirus)\n"
         L"\n"
         L"WAN Optimization:\n"
         L"  --wan               Enable WAN mode (auto-tune for high latency)\n"
@@ -149,6 +150,7 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
         }
         else if (wcscmp(arg, L"--ssd") == 0)            cfg.force_ssd      = true;
         else if (wcscmp(arg, L"--safe-net") == 0)       cfg.force_safe_net = true;
+        else if (wcscmp(arg, L"--buffered") == 0)       cfg.buffered       = true;
         else if (wcscmp(arg, L"--no-checksum") == 0)    cfg.no_checksum    = true;
         else if (wcscmp(arg, L"--compress") == 0)        cfg.compress     = true;
         else if (wcscmp(arg, L"--verify-after") == 0)    cfg.verify_after = true;

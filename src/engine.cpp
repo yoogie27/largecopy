@@ -527,10 +527,12 @@ bool CopyEngine::reopen_handles() {
         CancelIo(src_handle_);
         CloseHandle(src_handle_);
         Sleep(1000);
+        DWORD rflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
+        if (!cfg_->buffered) rflags |= FILE_FLAG_NO_BUFFERING;
         src_handle_ = CreateFileW(
             cfg_->source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
             nullptr, OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
+            rflags,
             nullptr);
         if (src_handle_ != INVALID_HANDLE_VALUE)
             CreateIoCompletionPort(src_handle_, iocp_, IOCP_KEY_READ, 0);
@@ -555,7 +557,8 @@ bool CopyEngine::reopen_handles() {
         CancelIo(dst_handle_);
         CloseHandle(dst_handle_);
         Sleep(1000);
-        DWORD rflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
+        DWORD rflags = FILE_FLAG_OVERLAPPED;
+        if (!cfg_->buffered) rflags |= FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
         dst_handle_ = CreateFileW(
             cfg_->dest, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
             nullptr, OPEN_EXISTING,
@@ -658,16 +661,17 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
 
     // ── Open source handles (always async via IOCP for fast reads) ──
     if (conn_count > 1) {
-        if (!src_pool_.open_read(hdr->source_path, conn_count, iocp_, IOCP_KEY_READ)) {
+        if (!src_pool_.open_read(hdr->source_path, conn_count, iocp_, IOCP_KEY_READ, cfg.buffered)) {
             lc_error(L"Failed to open source connection pool");
             return 1;
         }
     } else {
+        DWORD rflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
+        if (!cfg.buffered) rflags |= FILE_FLAG_NO_BUFFERING;
+        
         src_handle_ = CreateFileW(
             hdr->source_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr, OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
-            nullptr);
+            nullptr, OPEN_EXISTING, rflags, nullptr);
         if (src_handle_ == INVALID_HANDLE_VALUE) {
             lc_error(L"Cannot open source file '%s': %u", hdr->source_path, GetLastError());
             return 1;
@@ -691,17 +695,20 @@ int CopyEngine::execute_transfer(const Config& cfg, Ledger& ledger) {
         stats_.connections = 1;
     } else if (conn_count > 1) {
         // Local multi-connection: async overlapped via IOCP
-        if (!dst_pool_.open_write(hdr->dest_path, conn_count, iocp_, IOCP_KEY_WRITE, cfg.force_ssd)) {
+        if (!dst_pool_.open_write(hdr->dest_path, conn_count, iocp_, IOCP_KEY_WRITE, cfg.force_ssd, cfg.buffered)) {
             lc_error(L"Failed to open destination connection pool");
             return 1;
         }
         stats_.connections = conn_count;
     } else {
         // Local single-connection: async overlapped via IOCP
-        DWORD wflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
+        DWORD wflags = FILE_FLAG_OVERLAPPED;
+        if (!cfg.buffered) {
+            wflags |= FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
+        }
         
         // For remote single-handle, match ConnPool logic:
-        if (dst_remote) {
+        if (dst_remote && !cfg.buffered) {
             bool use_nb = cfg.force_ssd;
             if (env_.dest.fs_type == FsType::NTFS || env_.dest.fs_type == FsType::ReFS) {
                 use_nb = true;
@@ -1413,13 +1420,15 @@ int CopyEngine::run_verify(const Config& cfg) {
 
     int conn = cfg.connections;
     if (conn > 1) {
-        if (!src_pool_.open_read(cfg.dest, conn, iocp_, IOCP_KEY_READ)) return 1;
+        if (!src_pool_.open_read(cfg.dest, conn, iocp_, IOCP_KEY_READ, cfg.buffered)) return 1;
     } else {
+        DWORD rflags = FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
+        if (!cfg.buffered) rflags |= FILE_FLAG_NO_BUFFERING;
+        
         src_handle_ = CreateFileW(
             cfg.dest, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
             nullptr, OPEN_EXISTING,
-            FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
-            nullptr);
+            rflags, nullptr);
         if (src_handle_ == INVALID_HANDLE_VALUE) {
             lc_error(L"Cannot open destination for verification: %u", GetLastError());
             return 1;
@@ -1581,9 +1590,12 @@ int CopyEngine::run_bench(const Config& cfg) {
     preallocate_destination(temp_path, bench_size, have_priv);
 
     // For remote paths, skip FILE_FLAG_WRITE_THROUGH (causes brutal latency over SMB)
-    DWORD write_flags = FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN;
-    if (!is_remote) {
-        write_flags |= FILE_FLAG_WRITE_THROUGH;
+    DWORD write_flags = FILE_FLAG_SEQUENTIAL_SCAN;
+    if (!cfg.buffered) {
+        write_flags |= FILE_FLAG_NO_BUFFERING;
+        if (!is_remote) {
+            write_flags |= FILE_FLAG_WRITE_THROUGH;
+        }
     }
 
     HANDLE h = CreateFileW(temp_path, GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
@@ -1607,7 +1619,7 @@ int CopyEngine::run_bench(const Config& cfg) {
     uint32_t total_chunks = static_cast<uint32_t>((bench_size + chunk - 1) / chunk);
     while (written < bench_size && !g_abort) {
         DWORD to_write = static_cast<DWORD>((bench_size - written < chunk) ? (bench_size - written) : chunk);
-        to_write = align_up(to_write, SECTOR_SIZE);
+        if (!cfg.buffered) to_write = align_up(to_write, SECTOR_SIZE);
         DWORD bytes_written = 0;
         if (!WriteFile(h, buf, to_write, &bytes_written, nullptr)) {
             lc_error(L"Write failed at offset %llu: %u", written, GetLastError());
@@ -1629,7 +1641,7 @@ int CopyEngine::run_bench(const Config& cfg) {
     }
 
     // Skip FlushFileBuffers on remote - it forces server disk flush and can hang
-    if (!is_remote) {
+    if (!is_remote || cfg.buffered) {
         FlushFileBuffers(h);
     }
     QueryPerformanceCounter(&end);
@@ -1646,8 +1658,11 @@ int CopyEngine::run_bench(const Config& cfg) {
 
     lc_log(L"Reading 1 GB...");
 
+    DWORD read_flags = FILE_FLAG_SEQUENTIAL_SCAN;
+    if (!cfg.buffered) read_flags |= FILE_FLAG_NO_BUFFERING;
+    
     h = CreateFileW(temp_path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                     FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+                     read_flags, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
         QueryPerformanceCounter(&start);
         uint64_t total_read = 0;

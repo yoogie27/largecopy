@@ -17,9 +17,10 @@ ConnPool::~ConnPool() {
     close();
 }
 
-bool ConnPool::open_read(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key) {
+bool ConnPool::open_read(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key, bool buffered) {
     is_read_ = true;
-    flags_ = FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN;
+    flags_ = FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
+    if (!buffered) flags_ |= FILE_FLAG_NO_BUFFERING;
     wcsncpy(path_, path, MAX_PATH_EXTENDED - 1);
     count_ = count;
     robin_.store(0);
@@ -52,7 +53,7 @@ bool ConnPool::open_read(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR 
     return true;
 }
 
-bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key, bool force_ssd) {
+bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR key, bool force_ssd, bool buffered) {
     is_read_ = false;
 
     // Detect if destination is remote (UNC or mapped network drive)
@@ -64,7 +65,10 @@ bool ConnPool::open_write(const wchar_t* path, int count, HANDLE iocp, ULONG_PTR
         remote = (GetDriveTypeW(root) == DRIVE_REMOTE);
     }
 
-    if (remote) {
+    if (buffered) {
+        flags_ = FILE_FLAG_OVERLAPPED;
+    }
+    else if (remote) {
         // For remote: check if it's NTFS/ReFS. If so, we can use NO_BUFFERING safely.
         // Some non-Windows servers (macOS smbd) still struggle with it, so we default
         // to buffered for Unknown/FAT32/exFAT unless force_ssd is set.

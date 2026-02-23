@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.6";
+static constexpr const wchar_t* LC_VERSION = L"3.0.7";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -127,6 +127,7 @@ struct Config {
     bool     force_ssd     = false;     // treat destination as SSD (skip HDD throttles / buffered writes)
     bool     force_safe_net = false;    // force synchronous writes for network destinations (safe mode)
     bool     fast_abort    = true;      // speed up Ctrl+C by skipping cleanup
+    bool     buffered      = false;     // use Windows system cache (skip NO_BUFFERING)
     ProfileType profile    = ProfileType::None; // optional tuning profile
 };
 

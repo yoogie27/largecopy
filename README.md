@@ -394,6 +394,7 @@ Shows the auto-detected environment, auto-configured settings, and exits without
 | `--force` | off | Overwrite existing destination, ignoring any ledger. |
 | `--ssd` | off | Treat destination as SSD/NVMe (force async, skip HDD throttles). |
 | `--safe-net` | off | Force synchronous writes for network destinations (slower, safer). |
+| `--buffered` | off | Use Windows system cache (slower, but plays better with antivirus/DLP). |
 | `--wan` | auto | WAN mode. Auto-enabled for network destinations. |
 | `--adaptive` | auto | Auto-tune inflight depth in real-time. |
 | `--sparse` | auto | Skip zero-filled regions in sparse files. |
