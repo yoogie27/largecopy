@@ -304,10 +304,10 @@ void detect_environment(const wchar_t* source_path, const wchar_t* dest_path,
 
 Config auto_configure(const Config& user_cfg, const EnvironmentProfile& env) {
     Config cfg = user_cfg;
-    bool user_set_inflight  = (user_cfg.inflight != DEFAULT_INFLIGHT);
-    bool user_set_conns     = (user_cfg.connections != 1);
-    bool user_set_chunk     = (user_cfg.chunk_size != DEFAULT_CHUNK_SIZE);
-    bool user_set_threads   = (user_cfg.io_threads != DEFAULT_IO_THREADS);
+    bool user_set_inflight  = user_cfg.inflight_user_set;
+    bool user_set_conns     = user_cfg.connections_user_set;
+    bool user_set_chunk     = user_cfg.chunk_size_user_set;
+    bool user_set_threads   = user_cfg.threads_user_set;
     bool user_set_adaptive  = user_cfg.adaptive_user_set;
 
     bool src_remote = env.source.is_remote;

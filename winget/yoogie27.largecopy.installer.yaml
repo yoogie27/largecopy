@@ -1,13 +1,13 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
 
 PackageIdentifier: yoogie27.largecopy
-PackageVersion: 3.0.15
+PackageVersion: 3.0.16
 InstallerType: portable
 Commands:
   - largecopy
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/yoogie27/largecopy/releases/download/v3.0.15/largecopy.exe
+    InstallerUrl: https://github.com/yoogie27/largecopy/releases/download/v3.0.16/largecopy.exe
     InstallerSha256:
 ManifestType: installer
 ManifestVersion: 1.10.0

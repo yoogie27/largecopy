@@ -16,7 +16,7 @@
 #include <malloc.h>
 
 // ── Version ──────────────────────────────────────────────────────────────────
-static constexpr const wchar_t* LC_VERSION = L"3.0.15";
+static constexpr const wchar_t* LC_VERSION = L"3.0.16";
 static constexpr const char*    LC_MAGIC   = "LCPY0002";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -120,6 +120,8 @@ struct Config {
     bool     quiet         = false;
     bool     wan_mode      = false;     // enable WAN optimizations
     bool     adaptive      = false;     // adaptive inflight tuning
+    bool     chunk_size_user_set = false; // user explicitly passed --chunk-size
+    bool     threads_user_set  = false; // user explicitly passed --threads
     bool     adaptive_user_set = false; // user explicitly passed --adaptive or --no-adaptive
     bool     inflight_user_set = false; // user explicitly passed --inflight
     bool     connections_user_set = false; // user explicitly passed --connections

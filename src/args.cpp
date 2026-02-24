@@ -133,6 +133,7 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
             uint32_t mb = 0;
             if (!parse_uint(argv[i], mb)) { lc_error(L"Invalid chunk size: %s", argv[i]); return false; }
             cfg.chunk_size = mb * 1024u * 1024u;
+            cfg.chunk_size_user_set = true;
             if (cfg.chunk_size < SECTOR_SIZE) {
                 lc_error(L"Chunk size must be at least %u bytes", SECTOR_SIZE);
                 return false;
@@ -143,6 +144,7 @@ bool parse_args(int argc, wchar_t* argv[], Config& cfg) {
         else if (wcscmp(arg, L"--threads") == 0) {
             if (++i >= argc) { lc_error(L"--threads requires a value"); return false; }
             if (!parse_int(argv[i], cfg.io_threads)) { lc_error(L"Invalid thread count: %s", argv[i]); return false; }
+            cfg.threads_user_set = true;
         }
         else if (wcscmp(arg, L"--inflight") == 0) {
             if (++i >= argc) { lc_error(L"--inflight requires a value"); return false; }
