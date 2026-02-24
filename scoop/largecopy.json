@@ -3,8 +3,8 @@
   "description": "High-performance file copy engine with crash-safe resume, xxHash3 verification, and WAN optimization",
   "homepage": "https://github.com/yoogie27/largecopy",
   "license": "MIT",
-  "url": "https://github.com/yoogie27/largecopy/releases/download/v3.0.15/largecopy.exe",
-  "hash": "sha256:991587a5cbce5ece92a2cb8daa75570eaff4f260dcf93274c7852be7df0882c0",
+  "url": "https://github.com/yoogie27/largecopy/releases/download/v3.0.16/largecopy.exe",
+  "hash": "sha256:dd6b84714f3b20db518481426bad3bdb2d7634e218dc4bb5363529f298622180",
   "bin": "largecopy.exe",
   "checkver": "github",
   "autoupdate": {
